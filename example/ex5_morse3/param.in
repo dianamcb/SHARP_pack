@@ -1,0 +1,45 @@
+#SHARP Pack INPUT PARAMETERS
+model 	morse3
+
+#nbeads (nb)
+nbeads  4
+
+#normal mode transfrom(fft/matrix)
+nmode  fft
+
+#Number of Particle (np)
+nParticle   1
+
+#Number of time steps
+nsteps 	3000 
+
+#Number of Trajectories
+ntraj	10000
+
+#Number of Parallel Jobs
+ncpu	1
+
+#Classical of time step
+timeStep 	1.0
+
+#bead initialazation scheme ('same','gaussian','wigner')
+BeadPos		'gaussian'
+
+#initialazation scheme ('fixed', 'wigner','gaussian')
+VInitial	'gaussian'
+
+#velocity reversal scheme for frustrated hop('Never','Always','delV1','delV2')
+VReverse	'never'
+
+#velocity rescale for energy conservation('centroid','bead')
+vrescale       'centroid'
+
+#print run-time details
+rundtail	'Yes'
+
+#Skipping while printing history(default: 100)
+iprint		10
+
+#End of Input File
+FINISH
+

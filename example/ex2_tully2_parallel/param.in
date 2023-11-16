@@ -1,0 +1,45 @@
+#SHARP Pack INPUT PARAMETERS
+model 	tully2
+
+#Number of Particle(s)
+nParticle   1
+
+#nbeads (nb)
+nbeads  4
+
+#normal mode transfrom(fft/matrix)
+nmode  fft
+
+#Simulation time steps
+nsteps 	3000 
+
+#Number of Trajectories
+ntraj	10000
+
+#Number of Parallel Jobs
+ncpu	8
+
+#Simulation of time step
+timeStep 	1.0
+
+#Initial Momentum (k)
+Kinitial 	30.0
+
+#bead initialazation scheme ('same','gaussian','wigner')
+BeadPos		'gaussian'
+
+#initialazation scheme ('fixed', 'wigner','gaussian')
+VInitial	'fixed'
+
+#velocity reversal scheme for frustrated hop('Never','Always','delV1','delV2')
+VReverse	'never'
+
+#print run-time details
+rundtail	'Yes'
+
+#print step(s)(default: 100)
+iprint		10
+
+#End of Input File
+FINISH
+
