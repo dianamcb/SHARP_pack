@@ -1,8 +1,8 @@
   module runtraj_module
 !**********************************************************************
 !     SHARP Pack module for running trajectories
-!     
-!     authors    - D.K. Limbu & F.A. Shakib     
+!
+!     authors    - D.K. Limbu & F.A. Shakib
 !     copyright  - D.K. Limbu & F.A. Shakib
 !
 !     Method Development and Materials Simulation Laboratory
@@ -16,6 +16,7 @@
   use nonadiabatic_module
   use propagation_module
   use print_module
+  use zhunakamura_module
 
   implicit none
 
@@ -24,8 +25,8 @@
   subroutine runTraj()
 !**********************************************************************
 !     SHARP Pack routine to run trajectories
-!     
-!     authors    - D.K. Limbu & F.A. Shakib     
+!
+!     authors    - D.K. Limbu & F.A. Shakib
 !     copyright  - D.K. Limbu & F.A. Shakib
 !
 !     Method Development and Materials Simulation Laboratory
@@ -37,23 +38,24 @@
   integer  :: nlit
   integer  :: iprint
   integer  :: ia
-  
+
+  real*8   :: collE,outPES(8),adE(961),aSqr,bSqr,dSqr ! ZN params.
   real*8   :: rnlit
   real*8   :: RANF
   real*8   :: crit,length,currentlength
   real*8   :: KE,PE,Ering,TotE,Vn
   real*8   :: t2au=41340.d0
   real*8,allocatable :: db2pop(:,:)
-  
+
   integer,parameter  :: nrite_dtl1=1001
   integer,parameter  :: nrite_dtl2=1002
 
   ntrajR = 0
- 
+
   ia = floor((nsteps*dt)/t2au)+1
   allocate(db2pop(nstates,ia))
   db2pop = 0.d0
- 
+
   nlit=int(dt/dtq)
   rnlit = 1.0/REAL(nlit,8)
 
@@ -68,7 +70,7 @@
 
 ! main trajectory loop
   DO itraj=1,ntraj
-     
+
 
     call sample_init(vp_samp,rp_samp)
 
@@ -89,7 +91,7 @@
 
 ! Initialize position and momentum of solvent
 
-! get the intial wavefunction 
+! get the intial wavefunction
 
     call gethel(rc(:),hel(:,:,1),dhel_rc(:,:,:))
 
@@ -133,17 +135,17 @@
     enddo
 
 !==================================================================================
-! start a trajectory for n-steps     
+! start a trajectory for n-steps
     DO itime = 1, NSTEPS
-        
+
 ! main nuclear propagation step
       CALL ADVANCE_MD(istate,rp,vp,fp)
-       
+
 ! Caculating the centroid variables at each time step
 
       rc=0.d0
       vc=0.d0
-   
+
       do ibd=1,nb
         rc(:)=rc(:)+rp(:,ibd) !/real(nb)
         vc(:)=vc(:)+vp(:,ibd) !/real(nb)
@@ -152,7 +154,7 @@
       vc(:)=vc(:)/real(nb)
 
       CALL gethel(rc(:),hel(:,:,2),dhel_rc(:,:,:))
-      ! get the intial wavefunction 
+      ! get the intial wavefunction
       CALL Diag(eva(:,2),psi(:,:,2),hel(:,:,2))
 
       do i = 1, nstates
@@ -165,46 +167,65 @@
       call compute_vdotd(vdotd_new,psi)
 
 !      difference for ave_eva and vdotd
-      deva(:) = eva(:,2) - eva(:,1)  
-       
+      deva(:) = eva(:,2) - eva(:,1)
+
       vdotd = vdotd_new - vdotd_old
-   
-      ! electronic time steps
-      DO j = 1, nlit
-        eva(:,2) = eva(:,1) + deva * rnlit
-        vdotd_new = vdotd_old + vdotd * rnlit 
 
-        ! advance the adiabatic wave fucntion
-        CALL ADVANCE_ADIA(eva(:,:),vdotd_old(:,:),vdotd_new(:,:),adia(:))
+      ! FSSH method
+      if(keymethod .eq. 1)then
+        ! electronic time steps
+        DO j = 1, nlit
+          eva(:,2) = eva(:,1) + deva * rnlit
+          vdotd_new = vdotd_old + vdotd * rnlit
 
-        CALL Hopping(istate,inext,vdotd_new(:,:),adia(:))         
-           
-        ! give the current to previous
-        eva(:,1) = eva(:,2)      !eva(now) give to eva(old)
-        vdotd_old = vdotd_new
-      END DO
+          ! advance the adiabatic wave fucntion
+          CALL ADVANCE_ADIA(eva(:,:),vdotd_old(:,:),vdotd_new(:,:),adia(:))
+
+          CALL Hopping(istate,inext,vdotd_new(:,:),adia(:))
+
+          ! give the current to previous
+          eva(:,1) = eva(:,2)      !eva(now) give to eva(old)
+          vdotd_old = vdotd_new
+        END DO
+      endif
+
+      ! Zhu-Nakamura method
+      if(keymethod .eq. 2)then
+        call ZNHopping(outPES,adE,collE,vp,aSqr,bSqr,dSqr,istate,inext)
+        if((aSqr .lt. 0.02) .or. (1.0d4 .lt. aSqr)) goto 20
+      endif
 
       psi(:,:,1) = psi(:,:,2)
-            
+
       IF (istate.NE.inext) THEN
-      ! total potential energy difference for the whole ring polymer hamiltonian 
- 
-       CALL EKINRESCALE(istate,inext,vc,vp,rp,eva(:,:),dhel_rc(:,:,:),psi(:,:,:),itime)    
+      ! total potential energy difference for the whole ring polymer hamiltonian
+
+        ! FSSH method.
+        if(keymethod .eq. 1)then
+          CALL EKINRESCALE(istate,inext,vc,vp,rp,eva(:,:),dhel_rc(:,:,:),psi(:,:,:),itime)
+        endif
+
+        ! Zhu-Nakamura method.
+        if(keymethod .eq. 2)then
+          call ZNCorrection(inext,istate,collE,adE,outPES,rc,vc)
+        endif
       END IF
+
+20 continue
 
 !=============store the adiabatic/diabatic density matrix by differnet ways============
       if((mod(itime,iskip).eq.0).or.(itime==1))then
         iprint = int(itime/iskip)
         CALL  pop_estimator(istate,iprint,diabat1,diabat2,diabat3,redmat,redmat_ec)
-      
-! reflected probability calculation 
+
+! reflected probability calculation
         if((vc(1)<0).and.(rc(1) < 0))then
           CALL  pop_estimator(istate,iprint,diabat1R,diabat2R,diabat3R,redmatR,redmat_ecR)
         endif
       endif
 
 ! db2pop calculation
-      ! bined coefficient every 1 ps 
+      ! bined coefficient every 1 ps
      if((keymodel==12).or.(keymodel==13))then
        ia = floor((itime*dt)/t2au)+1
        db2pop(istate,ia)=db2pop(istate,ia)+1.
@@ -241,10 +262,10 @@
 
  101 format(i10,1x,f15.3,1x,150(e18.8E3,2x))
  102 format(i10,1x,f15.3,1x,350(f15.6,2x))
-   
+
   if(dlevel .eq. 1) close(nrite_dtl1)
   if(dlevel .eq. 2) close(nrite_dtl2)
-  
+
   if((keymodel==12).or.(keymodel==13))then
     open(1,file='db2pop.out')
     write(1,*) '# db2pop'
@@ -263,8 +284,8 @@
   subroutine compute_vdotd_old(vdotd_old,psi)
 !**********************************************************************
 !     SHARP Pack routine to compute vdotd_old
-!     
-!     authors    - D.K. Limbu & F.A. Shakib     
+!
+!     authors    - D.K. Limbu & F.A. Shakib
 !     copyright  - D.K. Limbu & F.A. Shakib
 !
 !     Method Development and Materials Simulation Laboratory
@@ -311,8 +332,8 @@
   subroutine compute_vdotd(vdotd_new,psi)
 !**********************************************************************
 !     SHARP Pack routine to compute vdotd_new
-!     
-!     authors    - D.K. Limbu & F.A. Shakib     
+!
+!     authors    - D.K. Limbu & F.A. Shakib
 !     copyright  - D.K. Limbu & F.A. Shakib
 !
 !     Method Development and Materials Simulation Laboratory
@@ -343,13 +364,13 @@
   enddo
 
   end subroutine compute_vdotd
-        
+
 
   subroutine calEnergy(rp,vp,KE,Erng,Vn,Hn,istate)
 !**********************************************************************
 !     SHARP Pack routine to calculate energies at particular time
-!     
-!     authors    - D.K. Limbu & F.A. Shakib     
+!
+!     authors    - D.K. Limbu & F.A. Shakib
 !     copyright  - D.K. Limbu & F.A. Shakib
 !
 !     Method Development and Materials Simulation Laboratory
@@ -374,7 +395,7 @@
 !  PE = eva_i*nb
 
   ! calculate active energy of each bead
-  
+
   Vn = 0.d0
   do ibd=1,nb
 
@@ -392,7 +413,7 @@
     do ibd = 1, nb
       if(ibd .eq. 1)then
         Erng = Erng + (rp(ip,ibd) - rp(ip,nb))**2
-      else  
+      else
         Erng = Erng + (rp(ip,ibd) - rp(ip,ibd-1))**2
       endif
     enddo
@@ -403,13 +424,13 @@
   Hn = KE+Erng+Vn
 
   end subroutine calEnergy
- 
+
 
   subroutine printHel()
 !**********************************************************************
 !     SHARP Pack routine to print analytical energy surface
-!     
-!     authors    - D.K. Limbu & F.A. Shakib     
+!
+!     authors    - D.K. Limbu & F.A. Shakib
 !     copyright  - D.K. Limbu & F.A. Shakib
 !
 !     Method Development and Materials Simulation Laboratory
@@ -418,7 +439,7 @@
 !  use models_module
 
   implicit none
-  
+
   integer :: i,j,k
   integer :: keymodel
 
@@ -440,10 +461,10 @@
 
      if(k == 1)psi(:,:,1)=psi(:,:,2)
 
-      do i = 1, nstates
-        psi(:,i,2) = psi(:,i,2)*dot_product(psi(:,i,1),psi(:,i,2))/ &
-                     abs(dot_product(psi(:,i,1),psi(:,i,2)))
-      end do
+     do i = 1, nstates
+       psi(:,i,2) = psi(:,i,2)*dot_product(psi(:,i,1),psi(:,i,2))/ &
+                    abs(dot_product(psi(:,i,1),psi(:,i,2)))
+     end do
 
      call compute_vdotd_old(d_ab,psi)
 

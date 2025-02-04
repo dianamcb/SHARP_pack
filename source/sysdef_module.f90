@@ -45,6 +45,7 @@
       dt = 1.0
       dtq = 0.1d0
 
+      keymethod = 1
       keymodel = 1
       nstates = 0
       nsteps = 0
@@ -112,6 +113,14 @@
 !c     number of of trajectories
            ntraj = intstr(directive,lenrec,idum)
 
+         elseif(findstring('method',directive,idum))then
+!c     selection of method
+           if(findstring('fssh',directive,idum))then
+             keymethod = 1
+           elseif(findstring('zhu',directive,idum))then
+             keymethod = 2
+           endif
+
          elseif(findstring('model',directive,idum))then
 !c     selection of model
            if(findstring('tully1',directive,idum))then
@@ -157,7 +166,14 @@
 !c     number of nbeads
            nb = intstr(directive,lenrec,idum)
            if(nb .eq. 1)then
-             method = 'FSSH'
+             if(keymethod .eq. 1)then
+               method = 'FSSH'
+             elseif(keymethod .eq. 2)then
+               method = 'Zhu-Nakamura'
+             else
+               keymethod = 1
+               method = 'FSSH'
+             endif
            elseif(nb .gt. 1)then
              method='RPSH'
            else

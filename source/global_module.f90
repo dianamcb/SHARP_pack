@@ -16,6 +16,7 @@
       real*8              :: dtq
 
       integer             :: keymodel
+      integer             :: keymethod
       integer             :: nstates
       integer             :: nsteps
       integer             :: nsample

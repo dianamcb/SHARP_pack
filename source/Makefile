@@ -1,6 +1,11 @@
-FC=ifort
+# FC=ifort
+# FC=ifx
+FC=gfortran
 
-FLAGS = -O3 -lfftw3 -llapack -lblas #-fbounds-check -DDEBUG -pg         
+FLAGS = -O3 -lfftw3 -llapack -lblas #-fbounds-check -DDEBUG -pg
+
+INCLUDE = /usr/local/include
+LIB = /usr/local/lib
 
 SRC = global_module.f90 \
       modelvar_module.f90 \
@@ -12,6 +17,7 @@ SRC = global_module.f90 \
       print_module.f90 \
       propagation_module.f90 \
       nonadiabatic_module.f90 \
+      zhunakamura_module.f90 \
       runtraj_module.f90 
 
 MAIN =  rpmdsh.f90
@@ -22,15 +28,15 @@ OBJS =  ${SRC:.f90=.o}
 
 
 %.o : %.f90
-	$(FC) -c $(FLAGS) $< -o $@
+	$(FC) -c $(FLAGS) $(INCLUDE) $(LIB) $< -o $@
 
 %.mod : %.f90
-	$(FC) -c $(FLAGS) $< -o $@
+	$(FC) -c $(FLAGS) $(INCLUDE) $(LIB) $< -o $@
 
 
 all:  $(OBJS)
-	$(FC) $(OBJS) $(MAIN) -o $(XOBJ) $(FLAGS)
+	$(FC) $(OBJS) $(MAIN) -o $(XOBJ) $(FLAGS)  $(INCLUDE) $(LIB)
 
 clean:
-	@echo "==> Cleaning ALL intermediate and executable files"	
-	rm -f *.mod *.o $(XOBJ) 
+	@echo "==> Cleaning ALL intermediate and executable files"
+	rm -f *.mod *.o $(XOBJ)
