@@ -33,18 +33,22 @@
 !**********************************************************************
   implicit none
 
-  integer  :: i,j,k,l,itime,itraj,ibd,ip
-  integer  :: istate, inext
-  integer  :: nlit
-  integer  :: iprint
-  integer  :: ia
+  integer            :: i,j,k,l,itime,itraj,ibd,ip
+  integer            :: istate, inext
+  integer            :: nlit
+  integer            :: iprint
+  integer            :: ia
 
-  real*8   :: collE,outPES(8),adE(961),aSqr,bSqr,dSqr ! ZN params.
-  real*8   :: rnlit
-  real*8   :: RANF
-  real*8   :: crit,length,currentlength
-  real*8   :: KE,PE,Ering,TotE,Vn
-  real*8   :: t2au=41340.d0
+  ! ZN params.
+  real*8             :: collE,outPES(10),adE(961,nstates+1),aSqr
+  integer            :: lb,ub
+  character*2        :: tranType
+
+  real*8             :: rnlit
+  real*8             :: RANF
+  real*8             :: crit,length,currentlength
+  real*8             :: KE,PE,Ering,TotE,Vn
+  real*8             :: t2au=41340.d0
   real*8,allocatable :: db2pop(:,:)
 
   integer,parameter  :: nrite_dtl1=1001
@@ -117,6 +121,11 @@
     nIniStat(istate) = nIniStat(istate) + 1
 
     call compute_vdotd_old(vdotd_old,psi)
+
+! Get potential energies, E=E(r) (for Zhu-Nakamura method)
+    if(keymethod .eq. 2)then
+      call ComputeAdiaE(adE)
+    endif
 
 !=================================================================================
 ! Initialize the forces
@@ -191,8 +200,10 @@
 
       ! Zhu-Nakamura method
       if(keymethod .eq. 2)then
-        call ZNHopping(outPES,adE,collE,vp,aSqr,bSqr,dSqr,istate,inext)
-        if((aSqr .lt. 0.02) .or. (1.0d4 .lt. aSqr)) goto 20
+        call ZNHopping(vp,adE,istate, inext, aSqr,collE,outPES,lb,ub,tranType)
+        if(tranType .eq. 'LZ')then
+          if((aSqr .lt. 0.02) .or. (1.0d4 .lt. aSqr)) goto 20
+        end if
       endif
 
       psi(:,:,1) = psi(:,:,2)
@@ -207,7 +218,7 @@
 
         ! Zhu-Nakamura method.
         if(keymethod .eq. 2)then
-          call ZNCorrection(inext,istate,collE,adE,outPES,rc,vc)
+          call ZNCorrection(istate,inext,adE,collE,lb,ub,outPES,tranType, rc,vc,itime)
         endif
       END IF
 
