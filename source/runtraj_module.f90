@@ -40,7 +40,7 @@
   integer            :: ia
 
   ! ZN params.
-  real*8             :: collE,outPES(10),adE(961,nstates+1),aSqr
+  real*8             :: collE,outPES(10),adE(961,nstates+1)
   integer            :: lb,ub
   character*2        :: tranType
 
@@ -200,15 +200,12 @@
 
       ! Zhu-Nakamura method
       if(keymethod .eq. 2)then
-        call ZNHopping(vp,adE,istate, inext, aSqr,collE,outPES,lb,ub,tranType)
-        if(tranType .eq. 'LZ')then
-          if((aSqr .lt. 0.02) .or. (1.0d4 .lt. aSqr)) goto 20
-        end if
+        call ZNHopping(vp,adE,istate, inext, collE,outPES,lb,ub,tranType)
       endif
 
       psi(:,:,1) = psi(:,:,2)
 
-      IF (istate.NE.inext) THEN
+      IF (istate .ne. inext) THEN
       ! total potential energy difference for the whole ring polymer hamiltonian
 
         ! FSSH method.
@@ -221,8 +218,6 @@
           call ZNCorrection(istate,inext,adE,collE,lb,ub,outPES,tranType, rc,vc,itime)
         endif
       END IF
-
-20 continue
 
 !=============store the adiabatic/diabatic density matrix by differnet ways============
       if((mod(itime,iskip).eq.0).or.(itime==1))then
