@@ -120,12 +120,10 @@
     inext=i
     nIniStat(istate) = nIniStat(istate) + 1
 
-    call compute_vdotd_old(vdotd_old,psi)
-
-! Get potential energies, E=E(r) (for Zhu-Nakamura method)
-    if(keymethod .eq. 2)then
-      call ComputeAdiaE(adE)
-    endif
+    ! For FSSH method
+    if(keymethod .eq. 1)then
+      call compute_vdotd_old(vdotd_old,psi)
+    end if
 
 !=================================================================================
 ! Initialize the forces
@@ -144,6 +142,12 @@
     enddo
 
 !==================================================================================
+
+    ! Get potential energies, E=E(r) (for Zhu-Nakamura method)
+    if(keymethod .eq. 2)then
+      call ComputeAdiaE(adE)
+    end if
+
 ! start a trajectory for n-steps
     DO itime = 1, NSTEPS
 
@@ -162,26 +166,26 @@
       rc(:)=rc(:)/real(nb)
       vc(:)=vc(:)/real(nb)
 
-      CALL gethel(rc(:),hel(:,:,2),dhel_rc(:,:,:))
-      ! get the intial wavefunction
-      CALL Diag(eva(:,2),psi(:,:,2),hel(:,:,2))
-
-      do i = 1, nstates
-        psi(:,i,2) = psi(:,i,2)*dot_product(psi(:,i,1),psi(:,i,2))/ &
-                     abs(dot_product(psi(:,i,1),psi(:,i,2)))
-      end do
-
-      ! middle decoup based on SHS-Tully 94
-
-      call compute_vdotd(vdotd_new,psi)
-
-!      difference for ave_eva and vdotd
-      deva(:) = eva(:,2) - eva(:,1)
-
-      vdotd = vdotd_new - vdotd_old
-
       ! FSSH method
       if(keymethod .eq. 1)then
+        CALL gethel(rc(:),hel(:,:,2),dhel_rc(:,:,:))
+        ! get the intial wavefunction
+        CALL Diag(eva(:,2),psi(:,:,2),hel(:,:,2))
+
+        do i = 1, nstates
+          psi(:,i,2) = psi(:,i,2)*dot_product(psi(:,i,1),psi(:,i,2))/ &
+                       abs(dot_product(psi(:,i,1),psi(:,i,2)))
+        end do
+
+        ! middle decoup based on SHS-Tully 94
+
+        call compute_vdotd(vdotd_new,psi)
+
+        ! difference for ave_eva and vdotd
+        deva(:) = eva(:,2) - eva(:,1)
+
+        vdotd = vdotd_new - vdotd_old
+
         ! electronic time steps
         DO j = 1, nlit
           eva(:,2) = eva(:,1) + deva * rnlit
@@ -200,7 +204,7 @@
 
       ! Zhu-Nakamura method
       if(keymethod .eq. 2)then
-        call ZNHopping(vp,adE,istate, inext, collE,outPES,lb,ub,tranType)
+        call ZNHopping(rc,vc,adE,istate, inext, collE,outPES,lb,ub,tranType)
       endif
 
       psi(:,:,1) = psi(:,:,2)
@@ -215,7 +219,14 @@
 
         ! Zhu-Nakamura method.
         if(keymethod .eq. 2)then
-          call ZNCorrection(istate,inext,adE,collE,lb,ub,outPES,tranType, rc,vc,itime)
+          call ZNCorrection(istate,inext,adE,collE,lb,ub,outPES,tranType, rp,vp,itime)
+          rc=0.d0
+          do ibd=1,nb
+            rc(:)=rc(:)+rp(:,ibd) !/real(nb)
+          enddo
+          rc(:)=rc(:)/real(nb)
+          call gethel(rc(:),hel(:,:,1),dhel_rc(:,:,:))
+          call Diag(eva(:,1),psi(:,:,1),hel(:,:,1))
         endif
       END IF
 

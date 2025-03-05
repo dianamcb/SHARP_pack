@@ -75,7 +75,8 @@ module zhunakamura_module
     end do
   end subroutine ComputeAdiaE
 
-  subroutine ComputeSeamLine(istate,inext,adE,xp,vp,collE,outPES,lb,ub,tranType)
+  subroutine ComputeSeamLine(istate,inext,adE,xp,vp, &
+                             collE,outPES,lb,ub,tranType)
 !**********************************************************************
 !     SHARP Pack subroutine that searches the seam point between
 !     twho potential energy surfaces: E_i (current state) and E_n
@@ -92,7 +93,6 @@ module zhunakamura_module
 !     - vp: Particle velocity.
 !
 !     Output:
-!     - collE: Collision energy.
 !     - outPES: Array with values needed to compute ZN parameters.
 !               It contains the values below.
 !       + If LZ type:
@@ -118,7 +118,8 @@ module zhunakamura_module
 !     - lb: Lower bound of adiabatic energy (where LZ method applies).
 !     - ub: Upper bound of adiabatic energy (where LZ method applies).
 !     - tranType: Transition type. Landau-Zener (LZ) or
-!                  nonadiabatic tunneling (NT).
+!                 nonadiabatic tunneling (NT).
+!     - collE: Collision energy.
 !
 !     Note: We are assuming potential energies of the Landau-Zener
 !           type: Both curves have same slope around crossing point.
@@ -132,11 +133,12 @@ module zhunakamura_module
 ! Todo: Check how the code determines the curve types.
     implicit none
 
-    real*8,  intent(in)      :: xp(np), vp(np)
-    real*8,  intent(in)      :: adE(961,nstates+1)
-    integer, intent(in)      :: inext, istate
+    real*8,      intent(in)  :: xp(np), vp(np)
+    real*8,      intent(in)  :: adE(961,nstates+1)
+    integer,     intent(in)  :: inext, istate
 
     real*8                   :: deltaE(961), dEn, dEi, dEn_k, dEn_l, dr
+    real*8                   :: tmp
     integer                  :: ub, lb
     integer                  :: idx, idxMinDeltaE, idxMinEn, k
 
@@ -144,12 +146,11 @@ module zhunakamura_module
     real*8                   :: d2Endr2_rb, d2Eidr2_rt, t1l, t2r
     real*8                   :: r0,adEi_r0,adEn_r0,adE0
     real*8                   :: ri_E0, rn_E0, adEi_rn_E0, adEn_ri_E0
-    real*8, intent(out)      :: outPES(10)
-    real*8, intent(out)      :: collE
+    real*8,      intent(out) :: outPES(10)
+    real*8,      intent(out) :: collE
     character*2, intent(out) :: tranType
 
     outPES(:) = 0.0d0
-    collE = 0.0d0
     tranType = 'NT'
     dr = adE(2,1)-adE(1,1) ! Constant value.
 
@@ -157,6 +158,8 @@ module zhunakamura_module
 
     ! Locate the region at which the particle is found.
     idx = LocIdx(adE(:,1),xp(1))
+    ! collE = adE(idx,istate+1) + 0.5*mp*vp(1)**2
+    collE = 0.5*mp*vp(1)**2
 
     ! Identify transition type.
     ! Curves with same slope are Landau-Zener type; curves with oposite
@@ -204,6 +207,8 @@ module zhunakamura_module
       outPES(1:4)  = (/ r0, adEi_r0, adEn_r0, adE0 /)
       outPES(5:8)  = (/ ri_E0, rn_E0, adEi_rn_E0, adEn_ri_E0 /)
       outPES(9:10) = (/ 0.0d00, 0.0d0 /)
+
+      ! collE = adE(idxMinDeltaE,istate+1) + 0.5*mp*vp(1)**2
     endif
 
     ! Nonadiabatic tunneling type.
@@ -231,15 +236,16 @@ module zhunakamura_module
       rb = adE(idx,1)
       adEb = adE(idx, inext+1)
       d2Endr2_rb = adE(idx+1,inext+1)+adE(idx-1,inext+1)
-      d2Endr2_rb = (d2Endr2_rb-2*adE(idx,inext+1))/dr**2
+      d2Endr2_rb = (d2Endr2_rb-2*adE(idx,inext+1))/(1.*dr)**2
 
       idx = MaxLoc(adE(lb:ub, istate+1), dim=1)
+      ! collE = adE(idx,istate+1) + 0.5*mp*vp(1)**2
       rt = adE(idx,1)
       adEt = adE(idx, istate+1)
       t1l = LocIdx(adE(lb:idx,istate+1), collE)
       t2r = LocIdx(adE(idx:ub,istate+1), collE)
       d2Eidr2_rt = adE(idx+1,istate+1)+adE(idx-1,istate+1)
-      d2Eidr2_rt = (d2Eidr2_rt-2*adE(idx,istate+1))/dr**2
+      d2Eidr2_rt = (d2Eidr2_rt-2*adE(idx,istate+1))/(1.*dr)**2
 
       idx = LocIdx(adE(lb:ub,1), 0.5*(rb+rt))
       adEi_rbrt = adE(idx, istate+1)
@@ -248,8 +254,6 @@ module zhunakamura_module
       outPES(1:6)  = (/ rb, adEb, rt, adEt, adEi_rbrt, adEn_rbrt /)
       outPES(7:10) = (/ d2Eidr2_rt, d2Endr2_rb, t1l, t2r /)
     endif
-
-    collE = adE(idxMinDeltaE,istate+1) + 0.5*mp*vp(1)**2
 
     contains
 
@@ -372,13 +376,15 @@ module zhunakamura_module
       if(rb .eq. rt)then
         aSqr = hbar**2/(4.*mp*(adEb-adEt))
         aSqr = aSqr * (d2Endr2_rb-d2Eidr2_rt)
+        aSqr = abs(aSqr)
       endif
     endif
 
   end subroutine ZNParams
 
 
-  subroutine ZNHopping(vp,adE,istate, inext,collE,outPES,lb,ub,tranType)
+  subroutine ZNHopping(xp,vp,adE,istate, &
+                       inext, collE,outPES,lb,ub,tranType)
 !**********************************************************************
 !     SHARP Pack subroutine that performs surface hopping according
 !     to the Zhu-Nakamura method.
@@ -388,6 +394,7 @@ module zhunakamura_module
 !       updates will include the implementation for multiple particles.
 !
 !     Input:
+!     - xp: Particle coordinate.
 !     - vp: Particle velocity.
 !     - adE: Adiabatic potentials E_i and E_n.
 !     - istate: Current surface energy.
@@ -418,11 +425,11 @@ module zhunakamura_module
 !         * t2r: T_2^r. Right position at E_i = collE
 !         * d2Eidr2_rt: Second derivative of E_i at rt
 !         * d2Endr2_rb: Second derivative of E_n at rb
-!     - collE: Collision energy.
 !     - lb: Lower bound of adiabatic energy (where LZ method applies).
 !     - ub: Upper bound of adiabatic energy (where LZ method applies).
 !     - tranType: Transition type. Landau-Zener (LZ) or
-!                  nonadiabatic tunneling (NT).
+!                 nonadiabatic tunneling (NT).
+!     - collE: Collision energy.
 !
 !     Notes:
 !     - ComputeSeamLine computes collE, not ZNHopping. However,
@@ -796,7 +803,7 @@ module zhunakamura_module
 
       ! Laundau-Zener case 1: E >= E_n(r0) ==> Classically allowed hop.
       if(collE .ge. adEn_r0)then
-        if(ldtl)WRITE(nrite_hopp,'(" Enough Kinetic energy to hop, &
+        if(ldtl)WRITE(nrite_hopp,'(" LZ: Enough Kinetic energy to hop, &
                                    accepted")')
         if((ctime*dt/41340.d0) > avetim)then
            nJump(istate,inext) = nJump(istate,inext) + 1
@@ -831,7 +838,7 @@ module zhunakamura_module
           nFrustR(istate,inext) = nFrustR(istate,inext) + 0
         end if
 
-        if(ldtl)WRITE(nrite_hopp,'(" Not enough Kinetic energy to hop. &
+        if(ldtl)WRITE(nrite_hopp,'(" LZ: Not enough Kinetic energy to hop. &
                                     Still, performing hop. &
                                     Classically forbidden hop.")')
         if((ctime*dt/41340.d0)>avetim)then
@@ -846,7 +853,7 @@ module zhunakamura_module
               idx = LocIdx(adE(lb:ub,inext+1),adEn_rnext)
               ! Rescaling velocity and adjusting position.
               rp(ip,ibd) = adE(idx,1)
-              vp(ip,ibd) = 0
+              vp(ip,ibd) = 0.0d0
             end do
           end do
         end if
@@ -883,7 +890,7 @@ module zhunakamura_module
 
       ! Nonadiabatic tunneling case 1: E >= Eb ==> Accepted hop.
       if(collE .ge. adEb)then
-        if(ldtl)WRITE(nrite_hopp,'(" Enough Kinetic energy to hop, &
+        if(ldtl)WRITE(nrite_hopp,'(" NT: Enough Kinetic energy to hop, &
                                    accepted")')
         if((ctime*dt/41340.d0) > avetim)then
            nJump(istate,inext) = nJump(istate,inext) + 1
@@ -921,7 +928,7 @@ module zhunakamura_module
           nFrustR(istate,inext) = nFrustR(istate,inext) + 0
         end if
 
-        if(ldtl)WRITE(nrite_hopp,'(" Not enough kinetic energy, &
+        if(ldtl)WRITE(nrite_hopp,'(" NT: Not enough kinetic energy, &
                                     rejected")')
         if((ctime*dt/41340.d0)>avetim)then
           nJumpFail(istate,inext) = nJumpFail(istate,inext) + 1
