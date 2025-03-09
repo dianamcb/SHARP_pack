@@ -28,10 +28,11 @@ module zhunakamura_module
 
   contains
 
-  subroutine ComputeAdiaE(adE)
+  subroutine ComputeAdiaEAndCoupling(adE,d_ab)
 !**********************************************************************
 !     SHARP Pack subroutine that computes the potential energies
-!     (PESs) as functions of coordinates.
+!     (PESs) as functions of coordinates and the nonadiabatic coupling
+!     as a function of coordinates.
 !
 !     Input:
 !     - x: Particle coordinate.
@@ -43,8 +44,9 @@ module zhunakamura_module
 !     Output:
 !     - adE: Adiabatic energies.
 !       + adE(:,1): Array of positions from -12 to 12.
-!       + adE(:,istate): Adiabatic energy E_i.
-!       + adE(:,inext): Adiabatic energy E_n.
+!       + adE(:,istate+1): Adiabatic energy E_i.
+!       + adE(:,inext+1): Adiabatic energy E_n.
+!     - d_ab: Nonadiabatic coupling vector.
 !
 !     Authors    - D.M. Castaneda-Bagatella & D.K. Limbu & F.A. Shakib
 !     Copyright  - D.M. Castaneda-Bagatella & D.K. Limbu & F.A. Shakib
@@ -54,28 +56,55 @@ module zhunakamura_module
 !**********************************************************************
     implicit none
 
-    real*8              :: x(np)
+    real*8              :: xp(np)
     real*8              :: hel(nstates,nstates)
     real*8              :: dheldr(nstates,nstates,np)
     real*8              :: eva(nstates,2)
     real*8              :: psi(nstates,nstates,2)
 
-    integer             :: k
+    integer             :: i,j,k,l,m,ip
 
     real*8, intent(out) :: adE(961,nstates+1)
+    real*8, intent(out) :: d_ab(961,nstates,nstates)
 
     do k = 1,961
-      x(:) = -12+(k-1)*0.025
+      xp(:) = -12+(k-1)*0.025
 
-      call GetHel(x(:),hel(:,:),dheldr(:,:,:))
+      call GetHel(xp(:),hel(:,:),dheldr(:,:,:))
       call Diag(eva(:,1),psi(:,:,2),hel(:,:))
 
-      adE(k,1) = x(1)
+      if(k == 1)psi(:,:,1)=psi(:,:,2)
+
+      do i = 1, nstates
+        psi(:,i,2) = psi(:,i,2)*dot_product(psi(:,i,1),psi(:,i,2))/ &
+                      abs(dot_product(psi(:,i,1),psi(:,i,2)))
+      end do
+
+      ! Compute the adiabatic coupling vector at each position
+      d_ab(k,:,:)=0.d0
+      do m=1,nstates
+        do l=1,nstates
+          if (m.ne.l) then
+            do i=1,nstates
+              do j=1,nstates
+                do ip=1,np
+                  d_ab(k,m,l) = d_ab(k,m,l)+psi(i,m,1)* &
+                  dheldr(i,j,ip)*psi(j,l,1)/(eva(l,1)-eva(m,1))
+                end do
+              end do
+            end do
+          end if
+        end do
+      end do
+
+      psi(:,:,1)=psi(:,:,2)
+
+      adE(k,1) = xp(1)
       adE(k,2:) = eva(:,1) !Adiabatic energies from E_1 to E_n.
     end do
-  end subroutine ComputeAdiaE
+  end subroutine ComputeAdiaEAndCoupling
 
-  subroutine ComputeSeamLine(istate,inext,adE,xp,vp, &
+  subroutine ComputeSeamLine(adE,xp,vp,d_ab,inext, istate, &
                              collE,outPES,lb,ub,tranType)
 !**********************************************************************
 !     SHARP Pack subroutine that searches the seam point between
@@ -119,7 +148,8 @@ module zhunakamura_module
 !     - ub: Upper bound of adiabatic energy (where LZ method applies).
 !     - tranType: Transition type. Landau-Zener (LZ) or
 !                 nonadiabatic tunneling (NT).
-!     - collE: Collision energy.
+!     - collE: Collision energy or translational energy along the
+!              transition direction.
 !
 !     Note: We are assuming potential energies of the Landau-Zener
 !           type: Both curves have same slope around crossing point.
@@ -131,35 +161,36 @@ module zhunakamura_module
 !     New Jersey Institute of Technology
 !**********************************************************************
 ! Todo: Check how the code determines the curve types.
+! Todo: Come with a way to determine the boundaries for NT type.
     implicit none
 
-    real*8,      intent(in)  :: xp(np), vp(np)
-    real*8,      intent(in)  :: adE(961,nstates+1)
-    integer,     intent(in)  :: inext, istate
+    real*8,      intent(in)    :: xp(np), vp(np)
+    real*8,      intent(in)    :: d_ab(961,nstates,nstates)
+    real*8,      intent(in)    :: adE(961,nstates+1)
+    integer,     intent(in)    :: inext
 
-    real*8                   :: deltaE(961), dEn, dEi, dEn_k, dEn_l, dr
-    real*8                   :: tmp
-    integer                  :: ub, lb
-    integer                  :: idx, idxMinDeltaE, idxMinEn, k
+    real*8                     :: deltaE(961), dEn, dEi, dEn_k, dEn_l, dr
+    real*8                     :: aCollE, bCollE, cCollE, gammaCollE
+    real*8                     :: tmp
+    integer                    :: ub, lb
+    integer                    :: idx, idxMinDeltaE, idxMinEn, k
 
-    real*8                   :: adEb,adEt,rb,rt,adEn_rbrt,adEi_rbrt
-    real*8                   :: d2Endr2_rb, d2Eidr2_rt, t1l, t2r
-    real*8                   :: r0,adEi_r0,adEn_r0,adE0
-    real*8                   :: ri_E0, rn_E0, adEi_rn_E0, adEn_ri_E0
-    real*8,      intent(out) :: outPES(10)
-    real*8,      intent(out) :: collE
-    character*2, intent(out) :: tranType
+    real*8                     :: adEb,adEt,rb,rt,adEn_rbrt,adEi_rbrt
+    real*8                     :: d2Endr2_rb, d2Eidr2_rt, t1l, t2r
+    real*8                     :: r0,adEi_r0,adEn_r0,adE0
+    real*8                     :: ri_E0, rn_E0, adEi_rn_E0, adEn_ri_E0
+    real*8,      intent(out)   :: outPES(10)
+    real*8,      intent(out)   :: collE
+    character*2, intent(out)   :: tranType
+
+    integer,     intent(inout) :: istate
 
     outPES(:) = 0.0d0
     tranType = 'NT'
     dr = adE(2,1)-adE(1,1) ! Constant value.
 
-    deltaE(:) = abs(adE(:,inext+1)-adE(:,istate+1)) !We ensure DeltaE>0
-
-    ! Locate the region at which the particle is found.
+    ! Locate the index of particle position and its energy (collE).
     idx = LocIdx(adE(:,1),xp(1))
-    ! collE = adE(idx,istate+1) + 0.5*mp*vp(1)**2
-    collE = 0.5*mp*vp(1)**2
 
     ! Identify transition type.
     ! Curves with same slope are Landau-Zener type; curves with oposite
@@ -167,30 +198,39 @@ module zhunakamura_module
     dEn = adE(idx,inext+1)-adE(idx-1,inext+1)
     dEi = adE(idx,istate+1)-adE(idx-1,istate+1)
     if(dEn*dEi .gt. 0)tranType = 'LZ' ! Landau-Zener type.
-    if(dEn*dEi .lt. 0)tranType = 'NT' ! Nonadiabatic tunneling type.
+    if(dEn*dEi .le. 0)tranType = 'NT' ! Nonadiabatic tunneling type.
+
+    ! Define an arbitrary local region where hop might be attempted
+    ! Todo: Define more flexible boundaries.
+    lb = idx-1; ub = idx+1
+    if(lb .lt. 1) lb = 1
+    if(ub .gt. 961) ub = 961
+
+    ! Locate the minimum energy surface gap in the local region
+    deltaE(:) = abs(adE(:,inext+1)-adE(:,istate+1)) !We ensure DeltaE>0
+    idxMinDeltaE = MinLoc(deltaE(:), lb,ub)
+
+    ! If min of energy gap is at (or out of) boundaries,
+    ! then no hop is attempted.
+    if(idxMinDeltaE .le. lb) istate = inext
+    if(idxMinDeltaE .ge. ub) istate = inext
+
+    ! Calculate the collision energy
+    aCollE = d_ab(idxMinDeltaE,istate,inext)**2/(2.d0*mp)
+    bCollE = vp(1)*d_ab(idxMinDeltaE,istate,inext)
+    cCollE = adE(idxMinDeltaE,inext+1)-adE(idxMinDeltaE,istate+1)
+    if(bCollE .ge. 0.d0)then
+      gammaCollE = -bCollE+sqrt(bCollE**2-4.d0*aCollE*cCollE)
+      gammaCollE = gammaCollE/(2.d0*aCollE)
+    else
+      gammaCollE = -bCollE-sqrt(bCollE**2-4.d0*aCollE*cCollE)
+      gammaCollE = gammaCollE/(2.d0*aCollE)
+    endif
+    collE = gammaCollE*d_ab(idxMinDeltaE,istate,inext)/mp
+    collE = 0.5*mp*collE**2
 
     ! Landau-Zener type
     if(tranType .eq. 'LZ')then
-      ! Search lower boundary.
-      lb = 1
-      do k = idx-1,2,-1
-        dEn_k = adE(k,inext+1)-adE(k-1,inext+1)
-        dEn_l = adE(k+1,inext+1)-adE(k,inext+1)
-        if(dEn_k*dEn_l .lt. 0)then! If slope changes, we found boundary
-          lb = k; exit
-        end if
-      end do
-      ! Search upper boundary.
-      ub = 961
-      do k = idx+1,960
-        dEn_k = adE(k,inext+1)-adE(k-1,inext+1)
-        dEn_l = adE(k+1,inext+1)-adE(k,inext+1)
-        if(dEn_k*dEn_l .lt. 0)then! If slope changes, we found boundary
-          ub = k; exit
-        end if
-      end do
-
-      idxMinDeltaE = MinLoc(deltaE(lb:ub), dim=1)
       r0 = adE(idxMinDeltaE,1) ! Position at Min(DeltaE)
       adEi_r0 = adE(idxMinDeltaE,istate+1) !E_i at r0
       adEn_r0 = adE(idxMinDeltaE,inext+1) !E_n at r0
@@ -207,49 +247,48 @@ module zhunakamura_module
       outPES(1:4)  = (/ r0, adEi_r0, adEn_r0, adE0 /)
       outPES(5:8)  = (/ ri_E0, rn_E0, adEi_rn_E0, adEn_ri_E0 /)
       outPES(9:10) = (/ 0.0d00, 0.0d0 /)
-
-      ! collE = adE(idxMinDeltaE,istate+1) + 0.5*mp*vp(1)**2
     endif
 
     ! Nonadiabatic tunneling type.
     if(tranType .eq. 'NT')then
-      ! Search lower boundary.
-      lb = 1
-      do k = idx-1,2,-1
-        dEn_k = adE(k,inext+1)-adE(k-1,inext+1)
-        dEn_l = adE(k+1,inext+1)-adE(k,inext+1)
-        if(dEn_k*dEn_l .lt. 0)then ! If slope changes, we found boundary.
-          lb = k; exit
-        end if
-      end do
-      ! Search upper boundary.
-      ub = 961
-      do k = idx+1,960
-        dEn_k = adE(k,inext+1)-adE(k-1,inext+1)
-        dEn_l = adE(k+1,inext+1)-adE(k,inext+1)
-        if(dEn_k*dEn_l .lt. 0)then ! If slope changes, we found boundary.
-          ub = k; exit
-        end if
-      end do
+      if(inext .gt. istate)then
+        idx = MinLoc(adE(:,inext+1), lb,ub)
+        rb = adE(idx,1)
+        adEb = adE(idx, inext+1)
+        d2Endr2_rb = adE(idx+2,inext+1)-2.*adE(idx+1,inext+1)
+        d2Endr2_rb = (d2Endr2_rb+adE(idx,inext+1))/(1.*dr)**2
 
-      idx = MinLoc(adE(lb:ub, inext+1), dim=1)
-      rb = adE(idx,1)
-      adEb = adE(idx, inext+1)
-      d2Endr2_rb = adE(idx+1,inext+1)+adE(idx-1,inext+1)
-      d2Endr2_rb = (d2Endr2_rb-2*adE(idx,inext+1))/(1.*dr)**2
+        idx = MaxLoc(adE(:,istate+1), lb,ub)
+        rt = adE(idx,1)
+        adEt = adE(idx, istate+1)
+        t1l = LocIdx(adE(lb:idx,istate+1), collE)
+        t2r = LocIdx(adE(idx:ub,istate+1), collE)
+        d2Eidr2_rt = adE(idx+2,istate+1)-2.*adE(idx+1,istate+1)
+        d2Eidr2_rt = (d2Eidr2_rt+adE(idx,istate+1))/(1.*dr)**2
 
-      idx = MaxLoc(adE(lb:ub, istate+1), dim=1)
-      ! collE = adE(idx,istate+1) + 0.5*mp*vp(1)**2
-      rt = adE(idx,1)
-      adEt = adE(idx, istate+1)
-      t1l = LocIdx(adE(lb:idx,istate+1), collE)
-      t2r = LocIdx(adE(idx:ub,istate+1), collE)
-      d2Eidr2_rt = adE(idx+1,istate+1)+adE(idx-1,istate+1)
-      d2Eidr2_rt = (d2Eidr2_rt-2*adE(idx,istate+1))/(1.*dr)**2
+        idx = LocIdx(adE(lb:ub,1), 0.5*(rb+rt))
+        adEi_rbrt = adE(idx, istate+1)
+        adEn_rbrt = adE(idx, inext+1)
+      end if
+      if(inext .lt. istate)then
+        idx = MinLoc(adE(:,istate+1),lb,ub)
+        rb = adE(idx,1)
+        adEb = adE(idx, istate+1)
+        d2Endr2_rb = adE(idx+2,istate+1)-2.*adE(idx+1,istate+1)
+        d2Endr2_rb = (d2Endr2_rb+adE(idx,istate+1))/(1.*dr)**2
 
-      idx = LocIdx(adE(lb:ub,1), 0.5*(rb+rt))
-      adEi_rbrt = adE(idx, istate+1)
-      adEn_rbrt = adE(idx, inext+1)
+        idx = MaxLoc(adE(:,inext+1), lb,ub)
+        rt = adE(idx,1)
+        adEt = adE(idx, inext+1)
+        t1l = LocIdx(adE(lb:idx,inext+1), collE)
+        t2r = LocIdx(adE(idx:ub,inext+1), collE)
+        d2Eidr2_rt = adE(idx+2,inext+1)-2.*adE(idx+1,inext+1)
+        d2Eidr2_rt = (d2Eidr2_rt+adE(idx,inext+1))/(1.*dr)**2
+
+        idx = LocIdx(adE(lb:ub,1), 0.5*(rb+rt))
+        adEi_rbrt = adE(idx, inext+1)
+        adEn_rbrt = adE(idx, istate+1)
+      end if
 
       outPES(1:6)  = (/ rb, adEb, rt, adEt, adEi_rbrt, adEn_rbrt /)
       outPES(7:10) = (/ d2Eidr2_rt, d2Endr2_rb, t1l, t2r /)
@@ -257,6 +296,36 @@ module zhunakamura_module
 
     contains
 
+    ! Locate index of arr at max(arr(lb:ub)).
+    integer function MaxLoc(arr,lb,ub)
+      implicit none
+      real*8,  intent(in)  :: arr(:)
+      real*8               :: tol,val
+      integer              :: i, lb, ub
+      tol = 1.0d2
+      val = nint(arr(lb)*tol)/tol
+      maxLoc = lb
+      do i=lb,ub
+        if(arr(i) .ge. val)then
+          maxLoc = i; val = nint(arr(i)*tol)/tol
+        end if
+      end do
+    end function MaxLoc
+    ! Locate index of arr at min(arr(lb:ub)).
+    integer function MinLoc(arr,lb,ub)
+      implicit none
+      real*8,  intent(in)  :: arr(:)
+      real*8               :: tol,val
+      integer              :: i, lb, ub
+      tol = 1.0d2
+      val = nint(arr(lb)*tol)/tol
+      minLoc = lb
+      do i=lb,ub
+        if(arr(i) .le. val)then
+          minLoc = i; val = nint(arr(i)*tol)/tol
+        end if
+      end do
+    end function MinLoc
     ! Locate index of arr where arr(idx) == val.
     integer function LocIdx(arr, val)
       implicit none
@@ -279,7 +348,8 @@ module zhunakamura_module
 !
 !     Input:
 !     - mp: Mass of a particle.
-!     - collE: Collision energy.
+!     - collE: Collision energy or translational energy along the
+!              transition direction.
 !     - outPES: Array of variables comming from ComputeSeamLine.
 !               It contains the values below (output potential)
 !       + If LZ type:
@@ -368,23 +438,22 @@ module zhunakamura_module
       t1l = outPES(9)
       t2r = outPES(10)
 
-      dSqr = ((adEb-adEt)/(adEn_rbrt-adEi_rbrt))**2
+      dSqr = ((adEb-adEt)/(adEn_rbrt-adEi_rbrt))**2 ! gamma^2
 
-      aSqr = abs((1.-dSqr)*hbar**2/(mp*(adEb-adEt)*(rb-rt)**2))
+      aSqr = (1.-dSqr)*hbar**2/(mp*(adEb-adEt)*(rb-rt)**2)
       bSqr = (collE-0.5*(adEb+adEt))/(0.5*(adEb-adEt))
 
       if(rb .eq. rt)then
         aSqr = hbar**2/(4.*mp*(adEb-adEt))
         aSqr = aSqr * (d2Endr2_rb-d2Eidr2_rt)
-        aSqr = abs(aSqr)
       endif
     endif
 
   end subroutine ZNParams
 
 
-  subroutine ZNHopping(xp,vp,adE,istate, &
-                       inext, collE,outPES,lb,ub,tranType)
+  subroutine ZNHopping(xp,vp,adE,d_ab ,istate, &
+                       inext,collE,outPES,lb,ub,tranType)
 !**********************************************************************
 !     SHARP Pack subroutine that performs surface hopping according
 !     to the Zhu-Nakamura method.
@@ -398,6 +467,7 @@ module zhunakamura_module
 !     - vp: Particle velocity.
 !     - adE: Adiabatic potentials E_i and E_n.
 !     - istate: Current surface energy.
+!     - d_ab: Nonadiabatic coupling vector.
 !
 !     Output:
 !     - inext: Index of surface energy to hop.
@@ -429,7 +499,8 @@ module zhunakamura_module
 !     - ub: Upper bound of adiabatic energy (where LZ method applies).
 !     - tranType: Transition type. Landau-Zener (LZ) or
 !                 nonadiabatic tunneling (NT).
-!     - collE: Collision energy.
+!     - collE: Collision energy or translational energy along the
+!              transition direction.
 !
 !     Notes:
 !     - ComputeSeamLine computes collE, not ZNHopping. However,
@@ -443,47 +514,51 @@ module zhunakamura_module
 !**********************************************************************
     implicit none
 
-    real*8                   :: xp(np)
-    real*8,      intent(in)  :: vp(np),adE(961,nstates+1)
-    integer,     intent(in)  :: istate
+    real*8                     :: xp(np)
+    real*8,      intent(in)    :: vp(np),adE(961,nstates+1)
+    real*8,      intent(in)    :: d_ab(nstates,nstates)
 
-    real*8                   :: aSqr, bSqr, dSqr
-    real*8                   :: aPar, deltapsi, bx, dr
-    real*8                   :: deltaZN, sigma0ZN, delta0ZN
-    real*8                   :: sigmaZN, g1, pZN, phiS
-    real*8                   :: tmp, tmp2, beta
-    real*8                   :: prob(nstates)
-    real*8                   :: acumulator, dice, ranf
-    real*8                   :: h4, h3, h2, wSqr
-    real*8                   :: tmpArr(100,2), sigmac
-    integer                  :: idx1, idx2, i, j, tmpu
-    complex*16               :: bPar, dPar, ctmp
-    complex*16               :: f1, f2, f1C, f2C, gamma1, gamma2
-    complex*16               :: kappaUp(961,nstates+1)
+    real*8                     :: aSqr, bSqr, dSqr
+    real*8                     :: aPar, deltapsi, bx, dr
+    real*8                     :: deltaZN, sigma0ZN, delta0ZN
+    real*8                     :: sigmaZN, g1, pZN, phiS
+    real*8                     :: tmp, tmp2, beta
+    real*8                     :: prob(nstates)
+    real*8                     :: acumulator, dice, ranf
+    real*8                     :: h4, h3, h2, wSqr
+    real*8                     :: tmpArr(100,2), sigmac
+    integer                    :: idx1, idx2, i, j, tmpu
+    complex*16                 :: bPar, dPar, ctmp
+    complex*16                 :: f1, f2, f1C, f2C, gamma1, gamma2
+    complex*16                 :: kappaUp(961,nstates+1)
 
-    real*8                   :: rb, adEb, rt, adEt, adEi_rbrt
-    real*8                   :: t1l, t2r
-    real*8                   :: adEn_rbrt, d2Endr2_rb, d2Eidr2_rt
-    real*8                   :: r0, adEi_r0, adEn_r0, adE0
-    real*8                   :: ri_E0, rn_E0, adEi_rn_E0, adEn_ri_E0
-    real*8                   :: ri_collE, rn_collE
-    real*8,      intent(out) :: outPES(10)
-    real*8,      intent(out) :: collE
-    integer,     intent(out) :: lb, ub !lower bound, upper bound.
-    integer,     intent(out) :: inext
-    character*2, intent(out) :: tranType
+    real*8                     :: rb, adEb, rt, adEt, adEi_rbrt
+    real*8                     :: t1l, t2r
+    real*8                     :: adEn_rbrt, d2Endr2_rb, d2Eidr2_rt
+    real*8                     :: r0, adEi_r0, adEn_r0, adE0
+    real*8                     :: ri_E0, rn_E0, adEi_rn_E0, adEn_ri_E0
+    real*8                     :: ri_collE, rn_collE
+    real*8,      intent(out)   :: outPES(10)
+    real*8,      intent(out)   :: collE
+    integer,     intent(out)   :: lb, ub !lower bound, upper bound.
+    integer,     intent(out)   :: inext
+    character*2, intent(out)   :: tranType
 
-    ! inext = istate
+    integer,     intent(inout) :: istate
+
     prob(:) = 0.0d0
     dr = abs(adE(2,1)-adE(1,1)) ! Deltar (constant value).
 
     ! Compute transition probabilities for all states.
     do i=1,nstates
       ! By default, hopping prob. from state i to state i is zero.
-      if(i .eq. istate)then; cycle; end if
+      if(istate .eq. i)then; cycle; end if
 
-      call ComputeSeamLine(istate,i,adE,xp,vp, &
+      call ComputeSeamLine(adE,xp,vp,d_ab,i, istate, &
                            collE,outPES,lb,ub,tranType)
+
+      if(istate .eq. i)then; cycle; endif ! Far from the crossing point.
+
       call ZNParams(outPES,collE,tranType, aSqr,bSqr,dSqr)
 
       if(tranType .eq. 'LZ')then
@@ -498,7 +573,6 @@ module zhunakamura_module
         ri_collE = outPES(9)
         rn_collE = outPES(10)
       end if
-
       if(tranType .eq. 'NT')then
         rb = outPES(1)
         adEb = outPES(2)
@@ -515,6 +589,10 @@ module zhunakamura_module
       aPar = sqrt(aSqr)
       bPar = sqrt(cmplx(bSqr,0.0d0))
       dPar = sqrt(cmplx(dSqr,0.0d0))
+
+      kappaUp(:,1)  = adE(:,1)
+      kappaUp(:,2:) = 2.*mp/hbar**2*cmplx(collE-adE(:,2:),0.0d0)
+      kappaUp(:,2:) = sqrt(kappaUp(:,2:))
 
       if(tranType .eq. 'LZ')then
         ! Laundau-Zener case 1: E >= E_n(r0) ==> p_(ZN)
@@ -544,10 +622,6 @@ module zhunakamura_module
           ctmp = ctmp*sqrt(2.0d0)*pi/(4.*aPar)
           sigma0ZN = real(ctmp)
           delta0ZN = aimag(ctmp)
-
-          kappaUp(:,1)  = adE(:,1)
-          kappaUp(:,2:) = 2.*mp/hbar**2*cmplx(collE-adE(:,2:),0.0d0)
-          kappaUp(:,2:) = sqrt(kappaUp(:,2:))
 
           if(collE .gt. adEi_r0)then
             idx1 = LocIdx(adE(lb:ub,1), ri_collE)
@@ -595,7 +669,7 @@ module zhunakamura_module
       if(tranType .eq. 'NT')then
         ! Nonadiabatic tunneling case 1: E >= Eb ==> p_(ZN)
         if(adEb .le. collE)then
-          prob(i)=sqrt(1.-(0.72-0.62*aPar**(1.43)/bSqr**2))
+          prob(i)=sqrt(1.-(0.72-0.62*aPar**(1.43))/bSqr**2)
           prob(i)=-sqrt(2./(1.+prob(i)))
           prob(i)=prob(i)*pi/(4.*aPar*abs(bPar))
           prob(i)=exp(prob(i))
@@ -604,25 +678,24 @@ module zhunakamura_module
         ! Nonadiabatic tunneling case 2: Et <= E < Eb ==> p_(12)
         if((adEt .le. collE) .and. (collE .lt. adEb))then
           h4 = 0.61*sqrt(2.+bSqr)
-          h3 = (aPar-3.*bSqr)*sqrt(1.23+bSqr)/(aSqr+3.)
+          h3 = (aPar-3.*bSqr)*sqrt(1.23+bSqr)/(aPar+3.)
           h2 = 1. + 0.38/aSqr * (1.+bSqr)**(1.2-0.4*bSqr)
 
-          do j=1,100
+          do j=1,99
             tmp = aSqr**(1./3.)
             tmp2 = aPar**(1./3.)
             tmpArr(j,1) = real(j-1,kind=8)/99.0d0
             tmpArr(j,2) = tmpArr(j,1)**3/(3.*(1.-tmpArr(j,1)**3))
-            tmpArr(j,2) = tmpArr(j,2)-bSqr*tmpArr(j,1)
-            tmpArr(j,2) = tmpArr(j,2)/(tmp*(1.-tmpArr(j,1)))
-            tmpArr(j,2) = tmpArr(j,2)-h3*tmpArr(j,1)
-            tmpArr(j,2) = tmpArr(j,2)/(tmp*h4*(1.-tmpArr(j,1))+tmp2*tmpArr(j,1))
+            tmpArr(j,2) = tmpArr(j,2)-bSqr*tmpArr(j,1)/(tmp*(1.-tmpArr(j,1)))
+            tmpArr(j,2) = tmpArr(j,2)-h3*(1.-tmpArr(j,1))/(tmp*h4*(1.-tmpArr(j,1))+tmp2*tmpArr(j,1))
             tmpArr(j,2) = cos(tmpArr(j,2))/(1.-tmpArr(j,1))**2
           end do
+
           tmp = tmpArr(2,1)-tmpArr(1,1)
-          wSqr = Integ(tmpArr(:,2),tmp)
+          wSqr = Integ(tmpArr(:99,2),tmp)
           wSqr = wSqr*wSqr
 
-          prob(i) = wSqr/(1.-wSqr)
+          prob(i) = wSqr/(1.+wSqr)
         end if
 
         ! Nonadiabatic tunneling case 3: E < Et ==> p_(12)
@@ -631,12 +704,11 @@ module zhunakamura_module
           sigmaZN=sigmaZN*sqrt(6.+10.*sqrt(1.-1./bSqr**2))
           sigmaZN=sigmaZN/(1.+sqrt(1.-1./bSqr**2))
 
-          idx1 = LocIdx(adE(lb:ub,1), t1l)
-          idx2 = LocIdx(adE(lb:ub,1), t2r)
+          idx1 = LocIdx(adE(lb:ub,1), t1l) ! Check
+          idx2 = LocIdx(adE(lb:ub,1), t2r) ! Check
           deltaZN = Integ(abs(kappaUp(idx1:idx2,istate+1)),dr)
-          deltaZN = deltaZN + delta0ZN
 
-          sigmac=sigmaZN*(1.-0.32*10**(-2./aSqr)*exp(-deltaZN))
+          sigmac=sigmaZN*(1.-0.32*10.**(-2./aSqr)*exp(-deltaZN))
 
           tmp = sigmac/pi
           beta = 2.0d0*pi*exp(-2.0d0*tmp)*tmp**(2.0d0*tmp)
@@ -652,6 +724,7 @@ module zhunakamura_module
     call random_number(ranf)
     dice = ranf
     prob(:) = prob(:)/nstates
+    istate = inext
     acumulator = 0.0d0
     do i=1,nstates
       acumulator=acumulator+prob(i)
@@ -721,7 +794,8 @@ module zhunakamura_module
 !     - rp: Particle coordinate.
 !     - vp: Particle velocity.
 !     - adE: Adiabatic potentials E_i and E_n.
-!     - collE: Collision energy.
+!     - collE: Collision energy or translational energy along the
+!              transition direction.
 !     - lb: Lower bound of adiabatic energy (where LZ method applies).
 !     - ub: Upper bound of adiabatic energy (where LZ method applies).
 !     - outPES: Array with values needed to compute ZN parameters.
@@ -781,7 +855,7 @@ module zhunakamura_module
     integer                 :: ip, ibd
     integer                 :: istate, inext
 
-    real*8                  :: adEn_rnext
+    real*8                  :: adEn_rnext, adEn, adEi, aCollE,bCollE,cCollE
     integer                 :: upstate
     integer                 :: idx, idxMinDeltaE, idxMinEp
 
@@ -860,7 +934,7 @@ module zhunakamura_module
 
         ! If hopping (classically forbidden) to lower FES.
         if(inext .lt. istate)then
-          idxMinEp = MinLoc(adE(:,istate+1), dim=1) !index of Min(Ep)
+          idxMinEp = MinLoc(adE(:,istate+1), 1,961) !index of Min(Ep)
           do ip=1,np
             do ibd=1,nb
               adEn_rnext = adEi_r0 - 0.5*mp*vp(ip,ibd)**2
@@ -889,7 +963,7 @@ module zhunakamura_module
       t2r = outPES(10)
 
       ! Nonadiabatic tunneling case 1: E >= Eb ==> Accepted hop.
-      if(collE .ge. adEb)then
+      if(collE .ge. 0.5*(adEb+adEt))then
         if(ldtl)WRITE(nrite_hopp,'(" NT: Enough Kinetic energy to hop, &
                                    accepted")')
         if((ctime*dt/41340.d0) > avetim)then
@@ -901,10 +975,13 @@ module zhunakamura_module
           do ibd=1,nb
             ! Rescaling velocity.
             ! Current and next velocities should have same direction.
+            idx = LocIdx(adE(:,1),rp(ip,ibd))
+            adEn = adE(idx,inext+1)
+            adEi = adE(idx,istate+1)
             if(vp(ip,ibd) .ge. 0)then
-              vp(ip,ibd)=sqrt(vp(ip,ibd)**2 - 2*(adEb-adEt)/mp)
+              vp(ip,ibd)= sqrt(vp(ip,ibd)**2 - 2*(adEn-adEi)/mp)
             else
-              vp(ip,ibd)=-sqrt(vp(ip,ibd)**2 - 2*(adEb-adEt)/mp)
+              vp(ip,ibd)=-sqrt(vp(ip,ibd)**2 - 2*(adEn-adEi)/mp)
             end if
           end do
         end do
@@ -915,14 +992,12 @@ module zhunakamura_module
       ! Nonadiabatic tunneling cases 2 and 3: E < Eb ==> Rejected hop.
       ! Velocity is not rescaled as particle does not hop, so it
       ! stays at current state (same vp and same xp).
-      if(collE .lt. adEb)then
-
+      if(collE .lt. 0.5*(adEb+adEt))then
         if((ctime*dt/41340.d0)>avetim)then
           nfrust_hop = nfrust_hop + 1
           nFrust(istate,inext) = nFrust(istate,inext) + 1
         end if
 
-        ! Never reverse velocity
         if((ctime*dt/41340.d0)>avetim)then
           nfrust_hop2 = 0
           nFrustR(istate,inext) = nFrustR(istate,inext) + 0
@@ -940,6 +1015,22 @@ module zhunakamura_module
 
     contains
 
+    ! Locate index of arr at min(arr(lb:ub)).
+    integer function MinLoc(arr,lb,ub)
+      implicit none
+      real*8,  intent(in)  :: arr(:)
+      real*8               :: tol
+      integer              :: val
+      integer              :: i, lb, ub
+      tol = 1.0d2
+      val = nint(arr(lb)*tol)/tol
+      minLoc = lb
+      do i=lb,ub
+        if(arr(i) .le. val)then
+          minLoc = i; val = nint(arr(i)*tol)/tol
+        end if
+      end do
+    end function MinLoc
     ! Locate index of arr where arr(idx) == val.
     integer function LocIdx(arr, val)
       implicit none

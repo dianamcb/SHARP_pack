@@ -41,6 +41,7 @@
 
   ! ZN params.
   real*8             :: collE,outPES(10),adE(961,nstates+1)
+  real*8             :: d_ab(961,nstates,nstates)
   integer            :: lb,ub
   character*2        :: tranType
 
@@ -71,6 +72,11 @@
      open(nrite_dtl2,file='HISTORYb',status='unknown')
      write(nrite_dtl2,'(1x,A)') '# nTraj       Time(au)    rp(np,nb)     vp(np,nb) '
   endif
+
+  ! Get potential energies, E=E(r) (for Zhu-Nakamura method)
+  if(keymethod .eq. 2)then
+    call ComputeAdiaEAndCoupling(adE,d_ab)
+  end if
 
 ! main trajectory loop
   DO itraj=1,ntraj
@@ -143,11 +149,6 @@
 
 !==================================================================================
 
-    ! Get potential energies, E=E(r) (for Zhu-Nakamura method)
-    if(keymethod .eq. 2)then
-      call ComputeAdiaE(adE)
-    end if
-
 ! start a trajectory for n-steps
     DO itime = 1, NSTEPS
 
@@ -204,7 +205,7 @@
 
       ! Zhu-Nakamura method
       if(keymethod .eq. 2)then
-        call ZNHopping(rc,vc,adE,istate, inext, collE,outPES,lb,ub,tranType)
+        call ZNHopping(rc,vc,adE,d_ab, istate, inext,collE,outPES,lb,ub,tranType)
       endif
 
       psi(:,:,1) = psi(:,:,2)
@@ -220,11 +221,13 @@
         ! Zhu-Nakamura method.
         if(keymethod .eq. 2)then
           call ZNCorrection(istate,inext,adE,collE,lb,ub,outPES,tranType, rp,vp,itime)
-          rc=0.d0
+          rc=0.d0; vc=0.d0
           do ibd=1,nb
-            rc(:)=rc(:)+rp(:,ibd) !/real(nb)
+            rc(:)=rc(:)+rp(:,ibd)
+            vc(:)=vc(:)+vp(:,ibd)
           enddo
           rc(:)=rc(:)/real(nb)
+          vc(:)=vc(:)/real(nb)
           call gethel(rc(:),hel(:,:,1),dhel_rc(:,:,:))
           call Diag(eva(:,1),psi(:,:,1),hel(:,:,1))
         endif
@@ -258,6 +261,7 @@
        enddo
        !rc(:)=rc(:)/real(nb)
        vc(:)=vc(:)/real(nb)
+
 
        if(((ntraj .lt.10) .or. (mod(itraj,10).eq.0)).and.(mod(itime,iskip).eq.0))then
          call calEnergy(rp,vp,KE,Ering,Vn,TotE,istate)
@@ -488,6 +492,7 @@
      write(1,'(150e15.6e3)') x(1),hel,eva(:,1),d_ab
 
      psi(:,:,1)=psi(:,:,2)
+
    enddo
 
    close(1)
