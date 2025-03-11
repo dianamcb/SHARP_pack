@@ -1,8 +1,8 @@
       module sysdef_module
 !**********************************************************************
-!     SHARP PACK module for defining simulation system     
-!     
-!     authors    - D.K. Limbu & F.A. Shakib     
+!     SHARP PACK module for defining simulation system
+!
+!     authors    - D.K. Limbu & F.A. Shakib
 !     copyright  - D.K. Limbu & F.A. Shakib
 !
 !     Method Development and Materials Simulation Laboratory
@@ -16,15 +16,15 @@
       subroutine sysdef(lkval)
 !**********************************************************************
 !     SHARP PACK routine for reading simulation control input
-!     parameters     
-!     
-!     authors    - D.K. Limbu & F.A. Shakib     
+!     parameters
+!
+!     authors    - D.K. Limbu & F.A. Shakib
 !     copyright  - D.K. Limbu & F.A. Shakib
 !
 !     Method Development and Materials Simulation Laboratory
 !**********************************************************************
       implicit none
-      
+
       character*1        :: directive(lenrec)
       logical            :: safe, loop, kill
       integer            :: i, idum, idnode, stat
@@ -40,7 +40,7 @@
       ldtl = .false.
       lkval = .false.
       lfft = .false.
-      
+
       np = 1
       dt = 1.0
       dtq = 0.1d0
@@ -74,20 +74,20 @@
 
       open(nread,file='param.in',status='old',IOSTAT=stat)
       if(stat .ne. 0) then
-         write(0,*)  
+         write(0,*)
          write(0,*) " ERROR!! "
          write(0,*) " 'param.in' file NOT FOUND! "
          write(0,*) " Please, provide necessary input file! "
-         write(0,*)  
+         write(0,*)
          stop
       end if
 
       call fdate(datentime)
 
       do while(loop)
-        
+
          call getrec(safe,idnode,nread)
-       
+
 !c     convert to lowercase and strip out leading blanks
          call lowcase(record,lenrec)
          call strip(record,lenrec)
@@ -169,13 +169,20 @@
              if(keymethod .eq. 1)then
                method = 'FSSH'
              elseif(keymethod .eq. 2)then
-               method = 'Zhu-Nakamura'
+               method = 'ZN' ! Zhu-Nakamura
              else
                keymethod = 1
                method = 'FSSH'
              endif
            elseif(nb .gt. 1)then
-             method='RPSH'
+             if(keymethod .eq. 1)then
+               method = 'RPSH'
+             elseif(keymethod .eq. 2)then
+               method = 'ZN-RPSH' ! Zhu-Nakamura
+             else
+               keymethod = 1
+               method = 'RPSH'
+             endif
            else
 !c     default
              nb = 1
@@ -227,7 +234,7 @@
            else
              write(0,*)'Invalid momentum initilazation,setting defacult'
              v0key = 1
-             !!stop 
+             !!stop
            endif
 
          elseif(findstring('vreverse',directive,idum))then
@@ -290,7 +297,7 @@
       enddo
       close(nread)
 ! end reading input.in file
-      end subroutine 
+      end subroutine
 
 !**********************************************************************
       end module sysdef_module

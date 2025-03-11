@@ -40,8 +40,8 @@
   integer            :: ia
 
   ! ZN params.
-  real*8             :: collE,outPES(10),adE(961,nstates+1)
-  real*8             :: d_ab(961,nstates,nstates)
+  real*8             :: collE,outPES(10),adE(mesh,nstates+1)
+  real*8             :: d_ab(mesh,nstates,nstates)
   integer            :: lb,ub
   character*2        :: tranType
 

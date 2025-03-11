@@ -1,8 +1,8 @@
       module global_module
 !**********************************************************************
 !     SHARP Pack module for defining global variables
-!     
-!     authors    - D.K. Limbu & F.A. Shakib     
+!
+!     authors    - D.K. Limbu & F.A. Shakib
 !     copyright  - D.K. Limbu & F.A. Shakib
 !
 !     Method Development and Materials Simulation Laboratory
@@ -11,8 +11,8 @@
       real*8,parameter    :: hbar=1.d0
       complex*16,parameter:: eye=(0.,1.)
 
-      integer             :: np     
-      real*8              :: dt    
+      integer             :: np
+      real*8              :: dt
       real*8              :: dtq
 
       integer             :: keymodel
@@ -23,26 +23,26 @@
       integer             :: ntraj
       integer             :: ntrajR
       integer             :: nb
-      integer             :: iskip 
+      integer             :: iskip
       integer             :: v0key
       integer             :: R0key
       real*8              :: P0
-      real*8              :: R0 
+      real*8              :: R0
       real*8              :: omega
       character(len=36)   :: modelname
       character(len=8)    :: method
 
       logical             :: ldtl
       logical             :: lfft
-  
+
       integer,parameter   :: nrite_hopp=110
       integer,parameter   :: nrite_dcoup=120
       integer,parameter   :: nrite_bath=140
- 
+
       integer             :: vrkey
-      integer             :: nfrust_hop 
+      integer             :: nfrust_hop
       integer             :: nfrust_hop2
-      integer             :: ncpu 
+      integer             :: ncpu
       integer             :: vckey
 
 ! Conversion factors to the atomic units
@@ -55,7 +55,7 @@
 ! Classical environment parameters
       real*8,parameter    :: pi=3.14159265d0  !DACOS(-1.d0)
       real*8              :: beta
-      real*8              :: mp 
+      real*8              :: mp
       real*8              :: kT
 
 !!! LinearChainModel !!!
@@ -63,7 +63,7 @@
       integer :: nprint
       real*8  :: gamaLC(64)
       real*8  :: sigmaLC(64)
-      real*8  :: d_ab(3,3)     
+      real*8  :: d_ab(3,3)
       real*8  :: v11
       real*8  :: v22
       real*8,parameter :: kJ_mol2au=0.00038125d0
@@ -72,4 +72,8 @@
 !!! with 3-states LinearChainModel !!!
       real*8  :: v33
 
+!!! Zhu-Nakamura !!!
+      integer, parameter :: mesh = int(1.d3)
+
       end module global_module
+

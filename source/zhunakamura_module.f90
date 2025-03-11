@@ -63,12 +63,16 @@ module zhunakamura_module
     real*8              :: psi(nstates,nstates,2)
 
     integer             :: i,j,k,l,m,ip
+    real*8              :: xlb, xub ! Boudaries of coordinate space
+    real*8              :: dx
 
-    real*8, intent(out) :: adE(961,nstates+1)
-    real*8, intent(out) :: d_ab(961,nstates,nstates)
+    real*8, intent(out) :: adE(mesh,nstates+1)
+    real*8, intent(out) :: d_ab(mesh,nstates,nstates)
 
-    do k = 1,961
-      xp(:) = -12+(k-1)*0.025
+    xlb = -15; xub = 15
+    dx = (xub-xlb)/mesh
+    do k = 1,int(mesh)
+      xp(:) = xlb + (k-1)*dx
 
       call GetHel(xp(:),hel(:,:),dheldr(:,:,:))
       call Diag(eva(:,1),psi(:,:,2),hel(:,:))
@@ -165,11 +169,11 @@ module zhunakamura_module
     implicit none
 
     real*8,      intent(in)    :: xp(np), vp(np)
-    real*8,      intent(in)    :: d_ab(961,nstates,nstates)
-    real*8,      intent(in)    :: adE(961,nstates+1)
+    real*8,      intent(in)    :: d_ab(mesh,nstates,nstates)
+    real*8,      intent(in)    :: adE(mesh,nstates+1)
     integer,     intent(in)    :: inext
 
-    real*8                     :: deltaE(961), dEn, dEi, dEn_k, dEn_l, dr
+    real*8                     :: deltaE(mesh), dEn, dEi, dEn_k, dEn_l, dr
     real*8                     :: aCollE, bCollE, cCollE, gammaCollE
     real*8                     :: tmp
     integer                    :: ub, lb
@@ -188,9 +192,10 @@ module zhunakamura_module
     outPES(:) = 0.0d0
     tranType = 'NT'
     dr = adE(2,1)-adE(1,1) ! Constant value.
+    lb = 1; ub = mesh
 
     ! Locate the index of particle position and its energy (collE).
-    idx = LocIdx(adE(:,1),xp(1))
+    idx = LocIdx(adE(:,1),xp(1), lb,ub)
 
     ! Identify transition type.
     ! Curves with same slope are Landau-Zener type; curves with oposite
@@ -201,10 +206,9 @@ module zhunakamura_module
     if(dEn*dEi .le. 0)tranType = 'NT' ! Nonadiabatic tunneling type.
 
     ! Define an arbitrary local region where hop might be attempted
-    ! Todo: Define more flexible boundaries.
-    lb = idx-1; ub = idx+1
+    lb = idx-92; ub = idx+92
     if(lb .lt. 1) lb = 1
-    if(ub .gt. 961) ub = 961
+    if(ub .gt. mesh) ub = mesh
 
     ! Locate the minimum energy surface gap in the local region
     deltaE(:) = abs(adE(:,inext+1)-adE(:,istate+1)) !We ensure DeltaE>0
@@ -216,9 +220,9 @@ module zhunakamura_module
     if(idxMinDeltaE .ge. ub) istate = inext
 
     ! Calculate the collision energy
-    aCollE = d_ab(idxMinDeltaE,istate,inext)**2/(2.d0*mp)
-    bCollE = vp(1)*d_ab(idxMinDeltaE,istate,inext)
-    cCollE = adE(idxMinDeltaE,inext+1)-adE(idxMinDeltaE,istate+1)
+    aCollE = d_ab(idx,istate,inext)**2/(2.d0*mp)
+    bCollE = vp(1)*d_ab(idx,istate,inext)
+    cCollE = adE(idx,inext+1)-adE(idx,istate+1)
     if(bCollE .ge. 0.d0)then
       gammaCollE = -bCollE+sqrt(bCollE**2-4.d0*aCollE*cCollE)
       gammaCollE = gammaCollE/(2.d0*aCollE)
@@ -226,8 +230,15 @@ module zhunakamura_module
       gammaCollE = -bCollE-sqrt(bCollE**2-4.d0*aCollE*cCollE)
       gammaCollE = gammaCollE/(2.d0*aCollE)
     endif
-    collE = gammaCollE*d_ab(idxMinDeltaE,istate,inext)/mp
-    collE = 0.5*mp*collE**2
+    if(aCollE .eq. 0.d0) gammaCollE = 0.d0
+    collE = gammaCollE*d_ab(idx,istate,inext)/mp
+    collE = vp(1)-collE
+    ! collE = 0.5*mp*collE**2
+    ! collE = adE(idx,istate+1) + 0.5*mp*collE**2
+    ! collE = adE(idx,inext+1) + 0.5*mp*collE**2
+    collE = 0.5*mp*vp(1)**2
+    ! collE = adE(idx,istate+1) + 0.5*mp*vp(1)**2
+    ! collE = adE(idx,inext+1) + 0.5*mp*vp(1)**2
 
     ! Landau-Zener type
     if(tranType .eq. 'LZ')then
@@ -236,11 +247,11 @@ module zhunakamura_module
       adEn_r0 = adE(idxMinDeltaE,inext+1) !E_n at r0
       adE0 = 0.5*(adEi_r0 + adEn_r0) ! E0 = Mean(E_i,E_n) at r0
 
-      idx = LocIdx(adE(lb:ub,istate+1), adE0)
+      idx = LocIdx(adE(:,istate+1), adE0, lb,ub)
       ri_E0 = adE(idx,1) ! Position at E_i = E0
       adEn_ri_E0 = adE(idx,inext+1)
 
-      idx = LocIdx(adE(lb:ub,inext+1), adE0)
+      idx = LocIdx(adE(:,inext+1), adE0, lb,ub)
       rn_E0 = adE(idx,1) ! Position at E_n = E0
       adEi_rn_E0 = adE(idx,istate+1)
 
@@ -251,44 +262,29 @@ module zhunakamura_module
 
     ! Nonadiabatic tunneling type.
     if(tranType .eq. 'NT')then
-      if(inext .gt. istate)then
-        idx = MinLoc(adE(:,inext+1), lb,ub)
-        rb = adE(idx,1)
-        adEb = adE(idx, inext+1)
-        d2Endr2_rb = adE(idx+2,inext+1)-2.*adE(idx+1,inext+1)
-        d2Endr2_rb = (d2Endr2_rb+adE(idx,inext+1))/(1.*dr)**2
-
-        idx = MaxLoc(adE(:,istate+1), lb,ub)
-        rt = adE(idx,1)
-        adEt = adE(idx, istate+1)
-        t1l = LocIdx(adE(lb:idx,istate+1), collE)
-        t2r = LocIdx(adE(idx:ub,istate+1), collE)
-        d2Eidr2_rt = adE(idx+2,istate+1)-2.*adE(idx+1,istate+1)
-        d2Eidr2_rt = (d2Eidr2_rt+adE(idx,istate+1))/(1.*dr)**2
-
-        idx = LocIdx(adE(lb:ub,1), 0.5*(rb+rt))
-        adEi_rbrt = adE(idx, istate+1)
-        adEn_rbrt = adE(idx, inext+1)
-      end if
-      if(inext .lt. istate)then
-        idx = MinLoc(adE(:,istate+1),lb,ub)
-        rb = adE(idx,1)
-        adEb = adE(idx, istate+1)
-        d2Endr2_rb = adE(idx+2,istate+1)-2.*adE(idx+1,istate+1)
-        d2Endr2_rb = (d2Endr2_rb+adE(idx,istate+1))/(1.*dr)**2
-
+      idx = MinLoc(adE(:,inext+1), lb,ub)
+      if((idx .le. lb).or.(idx .ge. ub))then
         idx = MaxLoc(adE(:,inext+1), lb,ub)
-        rt = adE(idx,1)
-        adEt = adE(idx, inext+1)
-        t1l = LocIdx(adE(lb:idx,inext+1), collE)
-        t2r = LocIdx(adE(idx:ub,inext+1), collE)
-        d2Eidr2_rt = adE(idx+2,inext+1)-2.*adE(idx+1,inext+1)
-        d2Eidr2_rt = (d2Eidr2_rt+adE(idx,inext+1))/(1.*dr)**2
-
-        idx = LocIdx(adE(lb:ub,1), 0.5*(rb+rt))
-        adEi_rbrt = adE(idx, inext+1)
-        adEn_rbrt = adE(idx, istate+1)
       end if
+      rb = adE(idx,1)
+      adEb = adE(idx, inext+1)
+      d2Endr2_rb = adE(idx+2,inext+1)-2.*adE(idx+1,inext+1)
+      d2Endr2_rb = (d2Endr2_rb+adE(idx,inext+1))/(1.*dr)**2
+
+      idx = MaxLoc(adE(:,istate+1), lb,ub)
+      if((idx .le. lb).or.(idx .ge. ub))then
+        idx = MinLoc(adE(:,istate+1), lb,ub)
+      end if
+      rt = adE(idx,1)
+      adEt = adE(idx, istate+1)
+      t1l = LocIdx(adE(:,istate+1), collE, lb,idx)
+      t2r = LocIdx(adE(:,istate+1), collE, idx,ub)
+      d2Eidr2_rt = adE(idx+2,istate+1)-2.*adE(idx+1,istate+1)
+      d2Eidr2_rt = (d2Eidr2_rt+adE(idx,istate+1))/(1.*dr)**2
+
+      idx = LocIdx(adE(:,1), 0.5*(rb+rt), lb,ub)
+      adEi_rbrt = adE(idx, istate+1)
+      adEn_rbrt = adE(idx, inext+1)
 
       outPES(1:6)  = (/ rb, adEb, rt, adEt, adEi_rbrt, adEn_rbrt /)
       outPES(7:10) = (/ d2Eidr2_rt, d2Endr2_rb, t1l, t2r /)
@@ -302,7 +298,7 @@ module zhunakamura_module
       real*8,  intent(in)  :: arr(:)
       real*8               :: tol,val
       integer              :: i, lb, ub
-      tol = 1.0d2
+      tol = 1.0d5
       val = nint(arr(lb)*tol)/tol
       maxLoc = lb
       do i=lb,ub
@@ -317,7 +313,7 @@ module zhunakamura_module
       real*8,  intent(in)  :: arr(:)
       real*8               :: tol,val
       integer              :: i, lb, ub
-      tol = 1.0d2
+      tol = 1.0d5
       val = nint(arr(lb)*tol)/tol
       minLoc = lb
       do i=lb,ub
@@ -327,11 +323,12 @@ module zhunakamura_module
       end do
     end function MinLoc
     ! Locate index of arr where arr(idx) == val.
-    integer function LocIdx(arr, val)
+    integer function LocIdx(arr, val, lb, ub)
       implicit none
       real*8,  intent(in)  :: arr(:), val
-      integer              :: i
-      do i=2,size(arr)-1
+      integer              :: i,lb,ub
+      locIdx = lb
+      do i=lb+1,ub-1
         if((arr(i-1) .lt. val) .and. (val .lt. arr(i+1)))then
           locIdx = i; exit
         end if
@@ -440,12 +437,13 @@ module zhunakamura_module
 
       dSqr = ((adEb-adEt)/(adEn_rbrt-adEi_rbrt))**2 ! gamma^2
 
-      aSqr = (1.-dSqr)*hbar**2/(mp*(adEb-adEt)*(rb-rt)**2)
+      aSqr = abs((1.-dSqr)*hbar**2/(mp*abs(adEb-adEt)*(rb-rt)**2))
       bSqr = (collE-0.5*(adEb+adEt))/(0.5*(adEb-adEt))
 
       if(rb .eq. rt)then
         aSqr = hbar**2/(4.*mp*(adEb-adEt))
-        aSqr = aSqr * (d2Endr2_rb-d2Eidr2_rt)
+        aSqr = (aSqr * (d2Endr2_rb-d2Eidr2_rt))
+        ! write(*,*) aSqr
       endif
     endif
 
@@ -515,7 +513,7 @@ module zhunakamura_module
     implicit none
 
     real*8                     :: xp(np)
-    real*8,      intent(in)    :: vp(np),adE(961,nstates+1)
+    real*8,      intent(in)    :: vp(np),adE(mesh,nstates+1)
     real*8,      intent(in)    :: d_ab(nstates,nstates)
 
     real*8                     :: aSqr, bSqr, dSqr
@@ -530,7 +528,7 @@ module zhunakamura_module
     integer                    :: idx1, idx2, i, j, tmpu
     complex*16                 :: bPar, dPar, ctmp
     complex*16                 :: f1, f2, f1C, f2C, gamma1, gamma2
-    complex*16                 :: kappaUp(961,nstates+1)
+    complex*16                 :: kappaUp(mesh,nstates+1)
 
     real*8                     :: rb, adEb, rt, adEt, adEi_rbrt
     real*8                     :: t1l, t2r
@@ -624,13 +622,13 @@ module zhunakamura_module
           delta0ZN = aimag(ctmp)
 
           if(collE .gt. adEi_r0)then
-            idx1 = LocIdx(adE(lb:ub,1), ri_collE)
-            idx2 = LocIdx(adE(lb:ub,1), r0)
+            idx1 = LocIdx(adE(:,1), ri_collE, lb,ub)
+            idx2 = LocIdx(adE(:,1), r0, lb,ub)
             sigmaZN = Integ(abs(kappaUp(idx1:idx2,istate+1)),dr)
             sigmaZN = sigmaZN + sigma0ZN
 
-            idx1 = LocIdx(adE(lb:ub,1), r0)
-            idx2 = LocIdx(adE(lb:ub,1), rn_collE)
+            idx1 = LocIdx(adE(:,1), r0, lb,ub)
+            idx2 = LocIdx(adE(:,1), rn_collE, lb,ub)
             deltaZN = Integ(abs(kappaUp(idx1:idx2,i+1)),dr)
             deltaZN = deltaZN + delta0ZN
           end if
@@ -638,10 +636,10 @@ module zhunakamura_module
           if(collE .le. adEi_r0)then
             sigmaZN = sigma0ZN
 
-            idx1 = LocIdx(adE(lb:ub,1), r0)
-            idx2 = LocIdx(adE(lb:ub,1), ri_collE)
+            idx1 = LocIdx(adE(:,1), r0, lb,ub)
+            idx2 = LocIdx(adE(:,1), ri_collE, lb,ub)
             deltaZN = -Integ(abs(kappaUp(idx1:idx2,istate+1)),dr)
-            idx2 = LocIdx(adE(lb:ub,1), rn_collE)
+            idx2 = LocIdx(adE(:,1), rn_collE, lb,ub)
             deltaZN = deltaZN+Integ(abs(kappaUp(idx1:idx2,i+1)),dr)
             deltaZN = deltaZN + delta0ZN
           end if
@@ -673,6 +671,7 @@ module zhunakamura_module
           prob(i)=-sqrt(2./(1.+prob(i)))
           prob(i)=prob(i)*pi/(4.*aPar*abs(bPar))
           prob(i)=exp(prob(i))
+          ! write(*,*) '1:',i, prob(i), xp(1), aSqr, bSqr, dSqr, aPar, abs(bPar)
         end if
 
         ! Nonadiabatic tunneling case 2: Et <= E < Eb ==> p_(12)
@@ -696,6 +695,7 @@ module zhunakamura_module
           wSqr = wSqr*wSqr
 
           prob(i) = wSqr/(1.+wSqr)
+          ! write(*,*) '2:',i, prob(i), xp(1), aSqr, bSqr, aPar, abs(bPar)
         end if
 
         ! Nonadiabatic tunneling case 3: E < Et ==> p_(12)
@@ -704,8 +704,8 @@ module zhunakamura_module
           sigmaZN=sigmaZN*sqrt(6.+10.*sqrt(1.-1./bSqr**2))
           sigmaZN=sigmaZN/(1.+sqrt(1.-1./bSqr**2))
 
-          idx1 = LocIdx(adE(lb:ub,1), t1l) ! Check
-          idx2 = LocIdx(adE(lb:ub,1), t2r) ! Check
+          idx1 = LocIdx(adE(:,1),t1l, lb,ub)
+          idx2 = LocIdx(adE(:,1),t2r, lb,ub)
           deltaZN = Integ(abs(kappaUp(idx1:idx2,istate+1)),dr)
 
           sigmac=sigmaZN*(1.-0.32*10.**(-2./aSqr)*exp(-deltaZN))
@@ -716,6 +716,7 @@ module zhunakamura_module
 
           tmp = beta*exp(-2.*deltaZN)
           prob(i) = tmp/(tmp+(1.+(0.5*aPar/(aPar+1.))*tmp)**2)
+          ! write(*,*) '3:',i, prob(i), xp(1), aSqr, bSqr, aPar, abs(bPar)
         end if
       end if
     end do
@@ -724,6 +725,7 @@ module zhunakamura_module
     call random_number(ranf)
     dice = ranf
     prob(:) = prob(:)/nstates
+    ! write(*,*) prob(:), dice
     istate = inext
     acumulator = 0.0d0
     do i=1,nstates
@@ -767,11 +769,12 @@ module zhunakamura_module
     end function Integ
 
     ! Locate index of arr where arr(idx) == val.
-    integer function LocIdx(arr, val)
+    integer function LocIdx(arr, val, lb,ub)
       implicit none
       real*8,  intent(in)  :: arr(:), val
-      integer              :: i
-      do i=2,size(arr)-1
+      integer              :: i,lb,ub
+      locIdx = lb
+      do i=lb+1,ub-1
         if((arr(i-1) .gt. val) .and. (val .gt. arr(i+1)))then
           locIdx = i; exit
         end if
@@ -846,7 +849,7 @@ module zhunakamura_module
     real*8                  :: ri_collE, rn_collE
     real*8,  intent(in)     :: outPES(10)
     real*8,  intent(in)     :: collE
-    real*8,  intent(in)     :: adE(961,nstates+1)
+    real*8,  intent(in)     :: adE(mesh,nstates+1)
     integer, intent(in)     :: lb, ub
     character*2, intent(in) :: tranType
 
@@ -924,7 +927,7 @@ module zhunakamura_module
           do ip=1,np
             do ibd=1,nb
               adEn_rnext = adEi_r0 + 0.5*mp*vp(ip,ibd)**2
-              idx = LocIdx(adE(lb:ub,inext+1),adEn_rnext)
+              idx = LocIdx(adE(:,inext+1),adEn_rnext, lb,ub)
               ! Rescaling velocity and adjusting position.
               rp(ip,ibd) = adE(idx,1)
               vp(ip,ibd) = 0.0d0
@@ -934,11 +937,11 @@ module zhunakamura_module
 
         ! If hopping (classically forbidden) to lower FES.
         if(inext .lt. istate)then
-          idxMinEp = MinLoc(adE(:,istate+1), 1,961) !index of Min(Ep)
+          idxMinEp = MinLoc(adE(:,istate+1), lb,ub) !index of Min(Ep)
           do ip=1,np
             do ibd=1,nb
               adEn_rnext = adEi_r0 - 0.5*mp*vp(ip,ibd)**2
-              idx = LocIdx(adE(lb:ub,istate+1),adEn_rnext)
+              idx = LocIdx(adE(:,istate+1),adEn_rnext, lb,ub)
               ! Rescaling velocity and adjusting position.
               rp(ip,ibd) = adE(idx,1)
               vp(ip,ibd) = -sqrt(2*(adEi_r0-adEn_rnext)/mp)
@@ -963,9 +966,10 @@ module zhunakamura_module
       t2r = outPES(10)
 
       ! Nonadiabatic tunneling case 1: E >= Eb ==> Accepted hop.
-      if(collE .ge. 0.5*(adEb+adEt))then
-        if(ldtl)WRITE(nrite_hopp,'(" NT: Enough Kinetic energy to hop, &
-                                   accepted")')
+      if(collE .ge. adEb)then
+      ! if(collE .ge. 0.5*(adEb+adEt))then
+        if(ldtl)WRITE(nrite_hopp,'(" NT: Enough Kinetic energy to hop &
+                                   (Eb <= E), accepted")')
         if((ctime*dt/41340.d0) > avetim)then
            nJump(istate,inext) = nJump(istate,inext) + 1
         endif
@@ -975,7 +979,8 @@ module zhunakamura_module
           do ibd=1,nb
             ! Rescaling velocity.
             ! Current and next velocities should have same direction.
-            idx = LocIdx(adE(:,1),rp(ip,ibd))
+            idx = LocIdx(adE(:,1),rp(ip,ibd), 1,mesh)
+            ! write(*,*) idx,adE(idx,1),rp(ip,ibd)
             adEn = adE(idx,inext+1)
             adEi = adE(idx,istate+1)
             if(vp(ip,ibd) .ge. 0)then
@@ -989,10 +994,10 @@ module zhunakamura_module
         istate = inext
       end if
 
-      ! Nonadiabatic tunneling cases 2 and 3: E < Eb ==> Rejected hop.
+      ! Nonadiabatic tunneling case 2: Et <= E < Eb ==> Rejected hop.
       ! Velocity is not rescaled as particle does not hop, so it
       ! stays at current state (same vp and same xp).
-      if(collE .lt. 0.5*(adEb+adEt))then
+      if((adEt .le. collE).and.(collE .lt. adEb))then
         if((ctime*dt/41340.d0)>avetim)then
           nfrust_hop = nfrust_hop + 1
           nFrust(istate,inext) = nFrust(istate,inext) + 1
@@ -1003,8 +1008,31 @@ module zhunakamura_module
           nFrustR(istate,inext) = nFrustR(istate,inext) + 0
         end if
 
-        if(ldtl)WRITE(nrite_hopp,'(" NT: Not enough kinetic energy, &
-                                    rejected")')
+        if(ldtl)WRITE(nrite_hopp,'(" NT: Not enough kinetic energy &
+                                    (Et <= E < Eb), rejected")')
+        if((ctime*dt/41340.d0)>avetim)then
+          nJumpFail(istate,inext) = nJumpFail(istate,inext) + 1
+        end if
+
+        inext = istate
+      end if
+
+      ! Nonadiabatic tunneling case 3: E < Et ==> Rejected hop.
+      ! Velocity is not rescaled as particle does not hop, so it
+      ! stays at current state (same vp and same xp).
+      if(collE .lt. adEt)then
+        if((ctime*dt/41340.d0)>avetim)then
+          nfrust_hop = nfrust_hop + 1
+          nFrust(istate,inext) = nFrust(istate,inext) + 1
+        end if
+
+        if((ctime*dt/41340.d0)>avetim)then
+          nfrust_hop2 = 0
+          nFrustR(istate,inext) = nFrustR(istate,inext) + 0
+        end if
+
+        if(ldtl)WRITE(nrite_hopp,'(" NT: Not enough kinetic energy &
+                                    (E < Et), rejected")')
         if((ctime*dt/41340.d0)>avetim)then
           nJumpFail(istate,inext) = nJumpFail(istate,inext) + 1
         end if
@@ -1022,7 +1050,7 @@ module zhunakamura_module
       real*8               :: tol
       integer              :: val
       integer              :: i, lb, ub
-      tol = 1.0d2
+      tol = 1.0d5
       val = nint(arr(lb)*tol)/tol
       minLoc = lb
       do i=lb,ub
@@ -1032,11 +1060,12 @@ module zhunakamura_module
       end do
     end function MinLoc
     ! Locate index of arr where arr(idx) == val.
-    integer function LocIdx(arr, val)
+    integer function LocIdx(arr,val, lb,ub)
       implicit none
       real*8,  intent(in)  :: arr(:), val
-      integer              :: i
-      do i=2,size(arr)-1
+      integer              :: i, lb, ub
+      locIdx = lb
+      do i=lb+1,ub-1
         if((arr(i-1) .gt. val) .and. (val .gt. arr(i+1)))then
           locIdx = i; exit
         end if
