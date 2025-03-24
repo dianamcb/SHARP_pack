@@ -77,6 +77,7 @@
   if(keymethod .eq. 2)then
     call ComputeAdiaEAndCoupling(adE,d_ab)
   end if
+  collE = 0.d0
 
 ! main trajectory loop
   DO itraj=1,ntraj
@@ -220,14 +221,8 @@
 
         ! Zhu-Nakamura method.
         if(keymethod .eq. 2)then
-          call ZNCorrection(istate,inext,adE,collE,lb,ub,outPES,tranType, rp,vp,itime)
-          rc=0.d0; vc=0.d0
-          do ibd=1,nb
-            rc(:)=rc(:)+rp(:,ibd)
-            vc(:)=vc(:)+vp(:,ibd)
-          enddo
-          rc(:)=rc(:)/real(nb)
-          vc(:)=vc(:)/real(nb)
+          call ZNCorrect(istate,inext,adE,lb,ub,outPES,tranType,d_ab, &
+                         collE,rp,vp,rc,vc, itime)
           call gethel(rc(:),hel(:,:,1),dhel_rc(:,:,:))
           call Diag(eva(:,1),psi(:,:,1),hel(:,:,1))
         endif

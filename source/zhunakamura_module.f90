@@ -56,7 +56,7 @@ module zhunakamura_module
 !**********************************************************************
     implicit none
 
-    real*8              :: xp(np)
+    real*8              :: rc(np)
     real*8              :: hel(nstates,nstates)
     real*8              :: dheldr(nstates,nstates,np)
     real*8              :: eva(nstates,2)
@@ -72,9 +72,9 @@ module zhunakamura_module
     xlb = -15; xub = 15
     dx = (xub-xlb)/mesh
     do k = 1,int(mesh)
-      xp(:) = xlb + (k-1)*dx
+      rc(:) = xlb + (k-1)*dx
 
-      call GetHel(xp(:),hel(:,:),dheldr(:,:,:))
+      call GetHel(rc(:),hel(:,:),dheldr(:,:,:))
       call Diag(eva(:,1),psi(:,:,2),hel(:,:))
 
       if(k == 1)psi(:,:,1)=psi(:,:,2)
@@ -103,12 +103,12 @@ module zhunakamura_module
 
       psi(:,:,1)=psi(:,:,2)
 
-      adE(k,1) = xp(1)
+      adE(k,1) = rc(1)
       adE(k,2:) = eva(:,1) !Adiabatic energies from E_1 to E_n.
     end do
   end subroutine ComputeAdiaEAndCoupling
 
-  subroutine ComputeSeamLine(adE,xp,vp,d_ab,inext, istate, &
+  subroutine ComputeSeamLine(adE,rc,vc,d_ab,inext, istate, &
                              collE,outPES,lb,ub,tranType)
 !**********************************************************************
 !     SHARP Pack subroutine that searches the seam point between
@@ -164,16 +164,16 @@ module zhunakamura_module
 !     Method Development and Materials Simulation Laboratory
 !     New Jersey Institute of Technology
 !**********************************************************************
-! Todo: Check how the code determines the curve types.
-! Todo: Come with a way to determine the boundaries for NT type.
+! Todo: Come with a way to define the boundaries lb and ub according
+!       to the aCollE criteria.
     implicit none
 
-    real*8,      intent(in)    :: xp(np), vp(np)
+    real*8,      intent(in)    :: rc(np), vc(np)
     real*8,      intent(in)    :: d_ab(mesh,nstates,nstates)
     real*8,      intent(in)    :: adE(mesh,nstates+1)
     integer,     intent(in)    :: inext
 
-    real*8                     :: deltaE(mesh), dEn, dEi, dEn_k, dEn_l, dr
+    real*8                     :: deltaE(mesh),dEn,dEi,dEn_k,dEn_l,dr
     real*8                     :: aCollE, bCollE, cCollE, gammaCollE
     real*8                     :: tmp
     integer                    :: ub, lb
@@ -182,11 +182,11 @@ module zhunakamura_module
     real*8                     :: adEb,adEt,rb,rt,adEn_rbrt,adEi_rbrt
     real*8                     :: d2Endr2_rb, d2Eidr2_rt, t1l, t2r
     real*8                     :: r0,adEi_r0,adEn_r0,adE0
-    real*8                     :: ri_E0, rn_E0, adEi_rn_E0, adEn_ri_E0
+    real*8                     :: ri_E0, rn_E0,adEi_rn_E0,adEn_ri_E0
     real*8,      intent(out)   :: outPES(10)
-    real*8,      intent(out)   :: collE
     character*2, intent(out)   :: tranType
 
+    real*8,      intent(inout) :: collE
     integer,     intent(inout) :: istate
 
     outPES(:) = 0.0d0
@@ -195,7 +195,7 @@ module zhunakamura_module
     lb = 1; ub = mesh
 
     ! Locate the index of particle position and its energy (collE).
-    idx = LocIdx(adE(:,1),xp(1), lb,ub)
+    idx = LocIdx(adE(:,1),rc(1), lb,ub)
 
     ! Identify transition type.
     ! Curves with same slope are Landau-Zener type; curves with oposite
@@ -205,40 +205,34 @@ module zhunakamura_module
     if(dEn*dEi .gt. 0)tranType = 'LZ' ! Landau-Zener type.
     if(dEn*dEi .le. 0)tranType = 'NT' ! Nonadiabatic tunneling type.
 
-    ! Define an arbitrary local region where hop might be attempted
-    lb = idx-92; ub = idx+92
-    if(lb .lt. 1) lb = 1
-    if(ub .gt. mesh) ub = mesh
-
     ! Locate the minimum energy surface gap in the local region
     deltaE(:) = abs(adE(:,inext+1)-adE(:,istate+1)) !We ensure DeltaE>0
     idxMinDeltaE = MinLoc(deltaE(:), lb,ub)
 
-    ! If min of energy gap is at (or out of) boundaries,
-    ! then no hop is attempted.
-    if(idxMinDeltaE .le. lb) istate = inext
-    if(idxMinDeltaE .ge. ub) istate = inext
+    ! Define an arbitrary local region where hop may be attempted
+    aCollE = d_ab(idx,istate,inext)**2/(2.d0*mp)
+    bCollE = vc(1)*d_ab(idx,istate,inext)
+    cCollE = adE(idx,inext+1)-adE(idx,istate+1)
+    if(aCollE .lt. 1.95d-4) istate = inext
+    if(bCollE**2-4.d0*aCollE*cCollE .le. 0.d0) istate = inext
 
     ! Calculate the collision energy
-    aCollE = d_ab(idx,istate,inext)**2/(2.d0*mp)
-    bCollE = vp(1)*d_ab(idx,istate,inext)
-    cCollE = adE(idx,inext+1)-adE(idx,istate+1)
-    if(bCollE .ge. 0.d0)then
-      gammaCollE = -bCollE+sqrt(bCollE**2-4.d0*aCollE*cCollE)
-      gammaCollE = gammaCollE/(2.d0*aCollE)
-    else
-      gammaCollE = -bCollE-sqrt(bCollE**2-4.d0*aCollE*cCollE)
-      gammaCollE = gammaCollE/(2.d0*aCollE)
-    endif
-    if(aCollE .eq. 0.d0) gammaCollE = 0.d0
-    collE = gammaCollE*d_ab(idx,istate,inext)/mp
-    collE = vp(1)-collE
-    ! collE = 0.5*mp*collE**2
-    ! collE = adE(idx,istate+1) + 0.5*mp*collE**2
-    ! collE = adE(idx,inext+1) + 0.5*mp*collE**2
-    collE = 0.5*mp*vp(1)**2
-    ! collE = adE(idx,istate+1) + 0.5*mp*vp(1)**2
-    ! collE = adE(idx,inext+1) + 0.5*mp*vp(1)**2
+    if(istate .ne. inext)then
+      aCollE = d_ab(idx,istate,inext)**2/(2.d0*mp)
+      bCollE = vc(1)*d_ab(idx,istate,inext)
+      cCollE = adE(idx,inext+1)-adE(idx,istate+1)
+      if(bCollE .ge. 0.d0)then
+        gammaCollE = -bCollE+sqrt(bCollE**2-4.d0*aCollE*cCollE)
+        gammaCollE = gammaCollE/(2.d0*aCollE)
+      else
+        gammaCollE = -bCollE-sqrt(bCollE**2-4.d0*aCollE*cCollE)
+        gammaCollE = gammaCollE/(2.d0*aCollE)
+      endif
+      collE = gammaCollE*d_ab(idx,istate,inext)/mp
+      collE = vc(1)-collE
+      collE = 0.5*mp*collE**2
+      collE = adE(idx,istate+1) + 2.0*collE
+    end if
 
     ! Landau-Zener type
     if(tranType .eq. 'LZ')then
@@ -263,24 +257,18 @@ module zhunakamura_module
     ! Nonadiabatic tunneling type.
     if(tranType .eq. 'NT')then
       idx = MinLoc(adE(:,inext+1), lb,ub)
-      if((idx .le. lb).or.(idx .ge. ub))then
-        idx = MaxLoc(adE(:,inext+1), lb,ub)
-      end if
       rb = adE(idx,1)
       adEb = adE(idx, inext+1)
-      d2Endr2_rb = adE(idx+2,inext+1)-2.*adE(idx+1,inext+1)
-      d2Endr2_rb = (d2Endr2_rb+adE(idx,inext+1))/(1.*dr)**2
+      d2Endr2_rb = adE(idx-1,inext+1)+adE(idx+1,inext+1)
+      d2Endr2_rb = (d2Endr2_rb-2.*adE(idx,inext+1))/(1.*dr)**2
 
       idx = MaxLoc(adE(:,istate+1), lb,ub)
-      if((idx .le. lb).or.(idx .ge. ub))then
-        idx = MinLoc(adE(:,istate+1), lb,ub)
-      end if
       rt = adE(idx,1)
       adEt = adE(idx, istate+1)
       t1l = LocIdx(adE(:,istate+1), collE, lb,idx)
       t2r = LocIdx(adE(:,istate+1), collE, idx,ub)
-      d2Eidr2_rt = adE(idx+2,istate+1)-2.*adE(idx+1,istate+1)
-      d2Eidr2_rt = (d2Eidr2_rt+adE(idx,istate+1))/(1.*dr)**2
+      d2Eidr2_rt = adE(idx-1,istate+1)+adE(idx+1,istate+1)
+      d2Eidr2_rt = (d2Eidr2_rt-2.*adE(idx,istate+1))/(1.*dr)**2
 
       idx = LocIdx(adE(:,1), 0.5*(rb+rt), lb,ub)
       adEi_rbrt = adE(idx, istate+1)
@@ -386,8 +374,6 @@ module zhunakamura_module
 !     Method Development and Materials Simulation Laboratory
 !     New Jersey Institute of Technology
 !**********************************************************************
-! Todo: Double-check d^2 for LZ case. It must always be d^2 >= 1.
-! Todo: Double-check d^2 for NT case. It must always be d^2 <= 1.
     implicit none
 
     real*8              :: rb, adEb, rt, adEt, adEi_rbrt, adEn_rbrt
@@ -437,20 +423,19 @@ module zhunakamura_module
 
       dSqr = ((adEb-adEt)/(adEn_rbrt-adEi_rbrt))**2 ! gamma^2
 
-      aSqr = abs((1.-dSqr)*hbar**2/(mp*abs(adEb-adEt)*(rb-rt)**2))
+      aSqr = ((1.-dSqr)*hbar**2/(mp*abs(adEb-adEt)*(rb-rt)**2))
       bSqr = (collE-0.5*(adEb+adEt))/(0.5*(adEb-adEt))
 
       if(rb .eq. rt)then
         aSqr = hbar**2/(4.*mp*(adEb-adEt))
         aSqr = (aSqr * (d2Endr2_rb-d2Eidr2_rt))
-        ! write(*,*) aSqr
       endif
     endif
 
   end subroutine ZNParams
 
 
-  subroutine ZNHopping(xp,vp,adE,d_ab ,istate, &
+  subroutine ZNHopping(rc,vc,adE,d_ab ,istate, &
                        inext,collE,outPES,lb,ub,tranType)
 !**********************************************************************
 !     SHARP Pack subroutine that performs surface hopping according
@@ -512,8 +497,8 @@ module zhunakamura_module
 !**********************************************************************
     implicit none
 
-    real*8                     :: xp(np)
-    real*8,      intent(in)    :: vp(np),adE(mesh,nstates+1)
+    real*8                     :: rc(np)
+    real*8,      intent(in)    :: vc(np),adE(mesh,nstates+1)
     real*8,      intent(in)    :: d_ab(nstates,nstates)
 
     real*8                     :: aSqr, bSqr, dSqr
@@ -550,12 +535,18 @@ module zhunakamura_module
     ! Compute transition probabilities for all states.
     do i=1,nstates
       ! By default, hopping prob. from state i to state i is zero.
-      if(istate .eq. i)then; cycle; end if
+      if(istate .eq. i) cycle
 
-      call ComputeSeamLine(adE,xp,vp,d_ab,i, istate, &
+      ! For Nonadiabatic tunneling surfaces, hops to lower
+      ! surfaces are not allowed. Hence prob(i) = 0.
+      if(tranType .eq. 'NT')then
+        if(istate .gt. i) cycle
+      end if
+
+      call ComputeSeamLine(adE,rc,vc,d_ab,i, istate, &
                            collE,outPES,lb,ub,tranType)
 
-      if(istate .eq. i)then; cycle; endif ! Far from the crossing point.
+      if(istate .eq. i) cycle ! Far from the crossing point.
 
       call ZNParams(outPES,collE,tranType, aSqr,bSqr,dSqr)
 
@@ -666,16 +657,14 @@ module zhunakamura_module
 
       if(tranType .eq. 'NT')then
         ! Nonadiabatic tunneling case 1: E >= Eb ==> p_(ZN)
-        if(adEb .le. collE)then
+        if(collE .ge. adEb)then
           prob(i)=sqrt(1.-(0.72-0.62*aPar**(1.43))/bSqr**2)
           prob(i)=-sqrt(2./(1.+prob(i)))
           prob(i)=prob(i)*pi/(4.*aPar*abs(bPar))
           prob(i)=exp(prob(i))
-          ! write(*,*) '1:',i, prob(i), xp(1), aSqr, bSqr, dSqr, aPar, abs(bPar)
-        end if
 
         ! Nonadiabatic tunneling case 2: Et <= E < Eb ==> p_(12)
-        if((adEt .le. collE) .and. (collE .lt. adEb))then
+        elseif(collE .le. adEt)then
           h4 = 0.61*sqrt(2.+bSqr)
           h3 = (aPar-3.*bSqr)*sqrt(1.23+bSqr)/(aPar+3.)
           h2 = 1. + 0.38/aSqr * (1.+bSqr)**(1.2-0.4*bSqr)
@@ -695,11 +684,9 @@ module zhunakamura_module
           wSqr = wSqr*wSqr
 
           prob(i) = wSqr/(1.+wSqr)
-          ! write(*,*) '2:',i, prob(i), xp(1), aSqr, bSqr, aPar, abs(bPar)
-        end if
 
         ! Nonadiabatic tunneling case 3: E < Et ==> p_(12)
-        if(collE .lt. adEt)then
+        else
           sigmaZN=pi/(16.*aPar*abs(bPar))
           sigmaZN=sigmaZN*sqrt(6.+10.*sqrt(1.-1./bSqr**2))
           sigmaZN=sigmaZN/(1.+sqrt(1.-1./bSqr**2))
@@ -716,7 +703,6 @@ module zhunakamura_module
 
           tmp = beta*exp(-2.*deltaZN)
           prob(i) = tmp/(tmp+(1.+(0.5*aPar/(aPar+1.))*tmp)**2)
-          ! write(*,*) '3:',i, prob(i), xp(1), aSqr, bSqr, aPar, abs(bPar)
         end if
       end if
     end do
@@ -725,7 +711,6 @@ module zhunakamura_module
     call random_number(ranf)
     dice = ranf
     prob(:) = prob(:)/nstates
-    ! write(*,*) prob(:), dice
     istate = inext
     acumulator = 0.0d0
     do i=1,nstates
@@ -785,8 +770,8 @@ module zhunakamura_module
     end function LocIdx
   end subroutine ZNHopping
 
-  subroutine ZNCorrection(istate,inext,adE,collE,lb,ub,outPES, &
-      tranType, rp,vp, ctime)
+  subroutine ZNCorrect(istate,inext,adE,lb,ub,outPES,tranType,d_ab, &
+                          collE,rp,vp,rc,vc, ctime)
 !**********************************************************************
 !     SHARP Pack subroutine that corrects velocity and coordinate
 !     after successful hopping.
@@ -848,8 +833,8 @@ module zhunakamura_module
     real*8                  :: ri_E0, rn_E0, adEi_rn_E0, adEn_ri_E0
     real*8                  :: ri_collE, rn_collE
     real*8,  intent(in)     :: outPES(10)
-    real*8,  intent(in)     :: collE
     real*8,  intent(in)     :: adE(mesh,nstates+1)
+    real*8,  intent(in)     :: d_ab(mesh,nstates,nstates)
     integer, intent(in)     :: lb, ub
     character*2, intent(in) :: tranType
 
@@ -858,11 +843,12 @@ module zhunakamura_module
     integer                 :: ip, ibd
     integer                 :: istate, inext
 
-    real*8                  :: adEn_rnext, adEn, adEi, aCollE,bCollE,cCollE
+    real*8                  :: adEn_rnext, adEn, adEi
+    real*8                  :: aCollE, bCollE, cCollE, gammaCollE
     integer                 :: upstate
     integer                 :: idx, idxMinDeltaE, idxMinEp
 
-    real*8, intent(inout)   :: rp(np,nb), vp(np,nb)
+    real*8, intent(inout)   :: rp(np,nb),vp(np,nb),rc(np),vc(np),collE
 
     avetim = 0.d0
 
@@ -974,13 +960,12 @@ module zhunakamura_module
            nJump(istate,inext) = nJump(istate,inext) + 1
         endif
 
-        ! If hopping (classically allowed) to higher FES.
+        ! Adjusting velocity of each bead.
         do ip=1,np
           do ibd=1,nb
             ! Rescaling velocity.
             ! Current and next velocities should have same direction.
             idx = LocIdx(adE(:,1),rp(ip,ibd), 1,mesh)
-            ! write(*,*) idx,adE(idx,1),rp(ip,ibd)
             adEn = adE(idx,inext+1)
             adEi = adE(idx,istate+1)
             if(vp(ip,ibd) .ge. 0)then
@@ -991,13 +976,22 @@ module zhunakamura_module
           end do
         end do
 
+        ! Adjusting position and velocity of centroid.
+        rc=0.d0; vc=0.d0
+        do ibd=1,nb
+          rc(:)=rc(:)+rp(:,ibd)
+          vc(:)=vc(:)+vp(:,ibd)
+        enddo
+        rc(:)=rc(:)/real(nb)
+        vc(:)=vc(:)/real(nb)
+
+        ! Setting PES after attempted hop.
         istate = inext
-      end if
 
       ! Nonadiabatic tunneling case 2: Et <= E < Eb ==> Rejected hop.
       ! Velocity is not rescaled as particle does not hop, so it
       ! stays at current state (same vp and same xp).
-      if((adEt .le. collE).and.(collE .lt. adEb))then
+      elseif(collE .ge. adEt)then
         if((ctime*dt/41340.d0)>avetim)then
           nfrust_hop = nfrust_hop + 1
           nFrust(istate,inext) = nFrust(istate,inext) + 1
@@ -1014,13 +1008,13 @@ module zhunakamura_module
           nJumpFail(istate,inext) = nJumpFail(istate,inext) + 1
         end if
 
+        ! Setting PES after attempted hop.
         inext = istate
-      end if
 
       ! Nonadiabatic tunneling case 3: E < Et ==> Rejected hop.
       ! Velocity is not rescaled as particle does not hop, so it
       ! stays at current state (same vp and same xp).
-      if(collE .lt. adEt)then
+      else
         if((ctime*dt/41340.d0)>avetim)then
           nfrust_hop = nfrust_hop + 1
           nFrust(istate,inext) = nFrust(istate,inext) + 1
@@ -1074,7 +1068,7 @@ module zhunakamura_module
         end if
       end do
     end function LocIdx
-  end subroutine ZNCorrection
+  end subroutine ZNCorrect
 !**********************************************************************
 end module zhunakamura_module
 
