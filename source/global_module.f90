@@ -73,7 +73,7 @@
       real*8  :: v33
 
 !!! Zhu-Nakamura !!!
-      integer, parameter :: mesh = int(1.d3)
+      integer, parameter :: mesh = int(1.0d3)
 
       end module global_module
 

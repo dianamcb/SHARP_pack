@@ -42,6 +42,7 @@
   ! ZN params.
   real*8             :: collE,outPES(10),adE(mesh,nstates+1)
   real*8             :: d_ab(mesh,nstates,nstates)
+  integer            :: hopped(nstates,nstates)
   integer            :: lb,ub
   character*2        :: tranType
 
@@ -82,6 +83,7 @@
 ! main trajectory loop
   DO itraj=1,ntraj
 
+    hopped(:,:) = 0
 
     call sample_init(vp_samp,rp_samp)
 
@@ -206,7 +208,8 @@
 
       ! Zhu-Nakamura method
       if(keymethod .eq. 2)then
-        call ZNHopping(rc,vc,adE,d_ab, istate, inext,collE,outPES,lb,ub,tranType)
+        call ZNHopping(rc,vc,adE,d_ab,hopped, istate, &
+                       inext,collE,outPES,lb,ub,tranType)
       endif
 
       psi(:,:,1) = psi(:,:,2)
@@ -222,7 +225,7 @@
         ! Zhu-Nakamura method.
         if(keymethod .eq. 2)then
           call ZNCorrect(istate,inext,adE,lb,ub,outPES,tranType,d_ab, &
-                         collE,rp,vp,rc,vc, itime)
+                         collE,hopped, rp,vp,rc,vc, itime)
           call gethel(rc(:),hel(:,:,1),dhel_rc(:,:,:))
           call Diag(eva(:,1),psi(:,:,1),hel(:,:,1))
         endif
